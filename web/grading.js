@@ -30,7 +30,7 @@ export const wordCount = s => (String(s).trim().match(/\S+/g) || []).length;
 export function scoreFor(item, met) {
   const k = item?.moves?.length ? item.must.length - item.moves.length : met.length;
   const facts = met.slice(0, k);
-  if (k < met.length) {
+  if (k > 0 && k < met.length) {
     if (!facts.some(Boolean)) return 0;
     if (!facts.every(Boolean)) return Math.min(0.5, scoreFromMet(met));
   }
