@@ -1,3 +1,17 @@
+# Status
+
+> **Uppdaterat för servern (0.10.0, 2026-11-12).** Avsnitten nedan beskriver artifacten v15 som den
+> levererades. Sedan dess, i det här repot: Go-backend med roller och PIN på servern, AI via servern med tak,
+> födelseår i stället för årskurs, "sätt i ordning", glosdiktamen och uppläsning, materialprofil resonemang,
+> feedback på egna skoluppgifter, matematik från kodade generatorer och strömmande svar i Förklara mer.
+> Automatiska tester finns nu: Go (`go test`) och JS (`node --test test/*.test.mjs`), båda i Nix-bygget.
+>
+> Kända buggar från v15 som är rättade: 1 (sidbilder: servern sparar `/api/files/{id}`, som fungerar
+> varaktigt), 2 (CSV), 4 (ringen vid 0 %), 7 (Lär ut det räknas mot barnets AI-tak), 10 (ingen gräns på
+> 1000 dokument). Delvis: 3 (på telefon hamnar knapparna inte under kompisen; menybubblan på breda skärmar
+> kvar). Kvar: 5, 6, 8, 11. Inte byggt: import av säkerhetskopia (beslut: ny start på servern), LAN för
+> skoldatorer (fas 3b).
+
 # Status för v15 (2026-11-11)
 
 "Testat" betyder här: kört i testmiljön (`dev/harness`, headless Chromium, påhittad data och en AI-stub med fasta svar),
