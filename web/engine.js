@@ -343,23 +343,24 @@ export function gradeLocal(item, answer) {
 }
 
 // Sätt i ordning (materialprofil fakta: tidslinjer, förlopp). answer: stegen i barnets
-// ordning. Rätt ordning ger 1; ett steg på fel ställe (längsta rätt ordnade följd är
-// n − 1) ger nästan rätt.
+// ordning. Rätt ordning ger 1. Nästan rätt bara med minst fyra steg och exakt två
+// grannar bytta (annars ger gissning för ofta delpoäng: med tre steg är fyra av fem
+// fel ordningar bara ett steg ifrån).
+export function orderDistance(steps, answer) {
+  const pos = answer.map(s => steps.indexOf(s));
+  let inv = 0;
+  for (let i = 0; i < pos.length; i++) for (let j = i + 1; j < pos.length; j++) if (pos[i] > pos[j]) inv++;
+  return inv;
+}
+
 export function gradeOrder(steps, answer) {
   const a = Array.isArray(answer) ? answer : [];
   const n = steps.length;
-  if (n && a.length === n && a.every((s, i) => s === steps[i])) return { score: 1, verdict: 'right' };
-  const pos = a.map(s => steps.indexOf(s)).filter(i => i >= 0);
-  // Längsta stigande delföljd = flest steg som redan står i rätt inbördes ordning.
-  const tails = [];
-  for (const x of pos) {
-    let lo = 0, hi = tails.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (tails[mid] < x) lo = mid + 1; else hi = mid; }
-    tails[lo] = x;
-  }
+  const valid = n > 0 && a.length === n && new Set(a).size === n && a.every(s => steps.includes(s));
+  if (valid && a.every((s, i) => s === steps[i])) return { score: 1, verdict: 'right' };
   const inPlace = a.filter((s, i) => s === steps[i]).length;
   const note = `${inPlace} av ${n} på rätt plats.`;
-  if (n >= 3 && a.length === n && tails.length >= n - 1) return { score: 0.5, verdict: 'almost', note };
+  if (valid && n >= 4 && orderDistance(steps, a) === 1) return { score: 0.5, verdict: 'almost', note };
   return { score: 0, verdict: 'wrong', note };
 }
 

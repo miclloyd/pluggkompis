@@ -1,7 +1,7 @@
 // Interaktiva frågetyper: para ihop (tryck eller dra), sortering till kategorier, begreppskort.
 // Allt går att göra med tryck och tangentbord; dra är ett tillägg för pekskärm och mus.
 import { html, useState, useEffect, useMemo, useRef } from './lib.js';
-import { shuffle } from './engine.js';
+import { shuffle, orderDistance } from './engine.js';
 
 // Gemensam dra-logik: drar ett element och rapporterar vilket mål (data-drop) det släpps på.
 function useDrag(onDrop) {
@@ -117,10 +117,11 @@ export function SortQuestion({ item, disabled, onAnswer, result }) {
 // Sätt i ordning: barnet flyttar stegen upp och ned (knappar fungerar på iPad utan
 // dragningar). Startordningen är aldrig redan rätt.
 export function OrderQuestion({ item, disabled, onAnswer, result }) {
+  // Startordningen är minst två byten från rätt, så att ett svar utan att flytta något aldrig blir rätt eller nästan rätt.
   const start = useMemo(() => {
     let o = shuffle(item.steps);
-    for (let i = 0; i < 5 && o.every((s, k) => s === item.steps[k]); i++) o = shuffle(item.steps);
-    if (o.every((s, k) => s === item.steps[k])) o = [...o.slice(1), o[0]];
+    for (let i = 0; i < 30 && orderDistance(item.steps, o) < 2; i++) o = shuffle(item.steps);
+    if (orderDistance(item.steps, o) < 2) o = item.steps.slice().reverse();
     return o;
   }, [item.id]);
   const [order, setOrder] = useState(start);

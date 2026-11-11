@@ -927,7 +927,7 @@ function BankPreview({ goals, banks, materials, onDelete }) {
           <div><strong>${it.q}</strong>
             <div class="small muted">${isFree(it) ? 'Exempel på svar' : 'Svar'}: ${correctAnswerText(it).replace(/\n/g, '; ')}</div>
             ${it.must && html`<div class="small muted">Bedöms på: ${it.must.join(' · ')}</div>`}
-            <div class="small muted">Källa: ${(materials.find(m => m.ref === it.src.m) || {}).name || 'Förälderns anteckning'}${it.src.m !== 'note' ? `, sida ${it.src.p}` : ''}</div></div>
+            <div class="small muted">Källa: ${!it.src ? 'glosförhöret' : `${(materials.find(m => m.ref === it.src.m) || {}).name || 'Förälderns anteckning'}${it.src.m !== 'note' ? `, sida ${it.src.p}` : ''}`}</div></div>
           <button class="link" onClick=${() => onDelete(g.id, it.id)}>Ta bort</button></li>`)}</ul>`;
       })}</div>`)}
   </details>`;

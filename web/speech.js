@@ -20,10 +20,14 @@ export function speak(text, lang = 'sv', rate = 0.9) {
 }
 
 // "sv-en" → ['sv', 'en']: glosan (term) på första språket, översättningen på andra.
+// Okänt språk ger null (då blir det ingen diktamen: fel röst lär ut fel uttal).
 export function glosaLangs(goal) {
   const [a, b] = String(goal?.langs || '').toLowerCase().split(/[-_/ ]+/);
-  return [a || 'sv', b || 'en'];
+  return [VOICE_LANG[a] ? a : null, VOICE_LANG[b] ? b : null];
 }
+
+// Ett ord eller en kort fras som går att skriva efter gehör; inte "a dog / the dog" eller "(adj.)".
+const dictable = w => typeof w === 'string' && w.trim() && !/[()/,;]/.test(w) && w.trim().split(/\s+/).length <= 3;
 
 // Diktamen (materialprofil glosor): barnet hör ordet och skriver det. Frågan skapas
 // här ur målet, inte av AI, och bara när enheten kan läsa upp.
@@ -31,9 +35,11 @@ export function withDictation(goals, banks) {
   if (!canSpeak()) return banks;
   const out = { ...banks };
   for (const g of goals) {
-    if (g.type !== 'glosa' || g.removed || !g.translation || !out[g.id]?.length) continue;
+    if (g.type !== 'glosa' || g.removed || !dictable(g.translation)) continue;
     const [, lang] = glosaLangs(g);
-    if (out[g.id].some(i => i.kind === 'dictation')) continue;
+    // Bara där banken redan har nivå 3: diktamen ska inte höja nivåtaket i övningen
+    // (föräldrarnas omräkning använder den sparade banken).
+    if (!lang || !(out[g.id] || []).some(i => i.level === 3) || out[g.id].some(i => i.kind === 'dictation')) continue;
     out[g.id] = [...out[g.id], {
       id: `dikt-${g.id}`, goalId: g.id, level: 3, kind: 'dictation', q: 'Lyssna och skriv ordet du hör',
       answer: g.translation, accept: [], lang, explain: `${g.translation} betyder ${g.term}.`, src: null,
