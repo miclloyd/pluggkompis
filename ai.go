@@ -17,7 +17,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -46,10 +45,12 @@ var (
 )
 
 const (
-	maxPromptBytes = 200000
-	maxImages      = 4
-	maxImageBytes  = 5 << 20
-	anthropicURL   = "https://api.anthropic.com/v1/messages"
+	maxPromptBytes      = 200000
+	maxChildPromptBytes = 40000 // rättning, Förklara mer, Lär ut det (frågan + sidans text)
+	childMaxTokens      = 2000
+	maxImages           = 4
+	maxImageBytes       = 5 << 20
+	anthropicURL        = "https://api.anthropic.com/v1/messages"
 )
 
 type AI struct {
@@ -99,26 +100,16 @@ CREATE TABLE IF NOT EXISTS ai_log (
 	}, err
 }
 
-// reserve räknar upp hinken om taket inte är nått.
+// reserve räknar upp hinken om taket inte är nått, i en enda sats (samtidiga
+// anrop kan inte smita förbi).
 func (a *AI) reserve(ctx context.Context, bucket string, limit int) (bool, error) {
-	tx, err := a.db.BeginTx(ctx, nil)
+	res, err := a.db.ExecContext(ctx, `INSERT INTO ai_usage (bucket, n) VALUES (?, 1)
+ON CONFLICT(bucket) DO UPDATE SET n = n + 1 WHERE n < ?`, bucket, limit)
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
-	var n int
-	err = tx.QueryRowContext(ctx, `SELECT n FROM ai_usage WHERE bucket = ?`, bucket).Scan(&n)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return false, err
-	}
-	if n >= limit {
-		return false, nil
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_usage (bucket, n) VALUES (?, 1)
-ON CONFLICT(bucket) DO UPDATE SET n = n + 1`, bucket); err != nil {
-		return false, err
-	}
-	return true, tx.Commit()
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 func (a *AI) logCall(bucket, tier, model, status string, in, out int) {
@@ -184,12 +175,8 @@ func parsePrompt(raw json.RawMessage) ([]message, error) {
 
 const jsonSystem = "Svara enbart med ett giltigt JSON-objekt, utan förklarande text och utan kodblock."
 
-func (a *AI) complete(ctx context.Context, tier string, msgs []message, images []image, wantJSON bool) (text string, truncated bool, in, out int, err error) {
+func (a *AI) complete(ctx context.Context, tier string, msgs []message, images []image, wantJSON bool, maxTokens int) (text string, truncated bool, in, out int, err error) {
 	model := map[string]string{"quick": a.models.Quick, "default": a.models.Default, "complex": a.models.Complex}[tier]
-	maxTokens := 16000
-	if tier == "quick" {
-		maxTokens = 4000
-	}
 	if len(images) > 0 {
 		last := msgs[len(msgs)-1]
 		var blocks []any
@@ -366,6 +353,18 @@ func (s *server) aiHandler(w http.ResponseWriter, r *http.Request) {
 		aiFail(w, berr.status, berr.code, berr.msg)
 		return
 	}
+	// Barnets anrop: bara de nivåer appen använder där, ingen bild, kortare
+	// prompt och svar — så att /api/ai inte blir en fri chattbot på nyckeln.
+	maxTokens := 16000
+	if q.Purpose == "child" {
+		if q.Tier == "complex" || len(images) > 0 || len(q.Prompt) > maxChildPromptBytes {
+			aiFail(w, 400, "invalid_request", "Det här anropet går inte att göra när man övar.")
+			return
+		}
+		maxTokens = childMaxTokens
+	} else if q.Tier == "quick" {
+		maxTokens = 4000
+	}
 	ok, dberr := s.ai.reserve(r.Context(), bucket, limit)
 	if dberr != nil {
 		storeError(w, dberr)
@@ -381,7 +380,7 @@ func (s *server) aiHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	model := map[string]string{"quick": s.ai.models.Quick, "default": s.ai.models.Default, "complex": s.ai.models.Complex}[q.Tier]
-	text, truncated, in, out, cerr := s.ai.complete(r.Context(), q.Tier, msgs, images, q.JSON)
+	text, truncated, in, out, cerr := s.ai.complete(r.Context(), q.Tier, msgs, images, q.JSON, maxTokens)
 	if cerr != nil {
 		e := cerr.(*aiError)
 		s.ai.logCall(bucket, q.Tier, model, e.code, in, out)
@@ -418,8 +417,11 @@ func readImages(files []*multipart.FileHeader) ([]image, *aiError) {
 		if err != nil {
 			return nil, &aiError{400, "image_rejected", "En sidbild kunde inte läsas."}
 		}
-		data, _ := io.ReadAll(io.LimitReader(f, maxImageBytes+1))
+		data, err := io.ReadAll(io.LimitReader(f, maxImageBytes+1))
 		f.Close()
+		if err != nil || len(data) > maxImageBytes {
+			return nil, &aiError{400, "image_rejected", "En sidbild kunde inte läsas."}
+		}
 		typ := http.DetectContentType(data)
 		if !imageTypes[typ] {
 			return nil, &aiError{400, "image_rejected", "En sidbild har ett format som inte stöds."}

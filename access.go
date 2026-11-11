@@ -12,11 +12,14 @@ package main
 // kräver upplåst föräldraläge.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -193,11 +196,52 @@ func (s *server) restrictedProfile(ctx context.Context, p string, body []byte) (
 		return nil, errBadDoc
 	}
 	for k, v := range in {
-		if childProfileFields[k] {
-			doc[k] = v
+		if !childProfileFields[k] {
+			continue
 		}
+		// Oförändrat värde (hela profilen skickas vid temabyte) prövas inte igen.
+		if old, ok := doc[k]; ok && bytes.Equal(old, v) {
+			continue
+		}
+		if err := validChildField(k, v); err != nil {
+			return nil, err
+		}
+		doc[k] = v
 	}
 	return json.Marshal(doc)
+}
+
+var (
+	kompisColor  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+	kompisAccess = map[string]bool{"inget": true, "glasogon": true, "mossa": true, "rosett": true}
+	themes       = map[string]bool{"auto": true, "light": true, "dark": true}
+)
+
+// validChildField: barnets egna fält har kända former (studio.js, theme.js).
+func validChildField(k string, v json.RawMessage) error {
+	switch k {
+	case "theme":
+		var t string
+		if json.Unmarshal(v, &t) != nil || !themes[t] {
+			return errBadDoc
+		}
+	case "kompis":
+		var c struct {
+			Color, Accessory, Name string
+		}
+		var extra map[string]json.RawMessage
+		if json.Unmarshal(v, &c) != nil || json.Unmarshal(v, &extra) != nil || len(extra) > 3 ||
+			!kompisColor.MatchString(c.Color) || !kompisAccess[c.Accessory] ||
+			c.Name == "" || utf8.RuneCountInString(c.Name) > 24 {
+			return errBadDoc
+		}
+	case "updatedAt", "schemaVersion":
+		var n float64
+		if json.Unmarshal(v, &n) != nil {
+			return errBadDoc
+		}
+	}
+	return nil
 }
 
 func accessError(w http.ResponseWriter, err error) {

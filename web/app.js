@@ -100,7 +100,7 @@ function App() {
       <div class="top-inner">
         <button class="wordmark" onClick=${() => go({ name: 'start' })} aria-label="Till startsidan">Pluggkompis</button>
         <span class="top-actions">
-          ${parentOk && html`<button class="btn ghost small" onClick=${() => { setParentOk(false); env.auth.lock().catch(() => {}); go({ name: 'start' }); }}>Lås föräldraläget</button>`}
+          ${parentOk && html`<button class="btn ghost small" onClick=${() => env.auth.lock().then(() => { setParentOk(false); go({ name: 'start' }); }).catch(x => alert('Föräldraläget kunde inte låsas: ' + errText(x)))}>Lås föräldraläget</button>`}
           <${ThemeButton} mode=${theme} onChange=${changeTheme} />
         </span>
       </div>

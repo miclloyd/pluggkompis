@@ -22,7 +22,7 @@ import (
 
 const (
 	maxDocBytes  = 8 << 20  // ett dokument (material med sidtext, frågebanker)
-	maxFileBytes = 40 << 20 // en uppladdad fil (PDF, foto, Word)
+	maxFileBytes = 25 << 20 // en uppladdad fil (PDF, foto, Word)
 )
 
 var (

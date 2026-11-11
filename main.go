@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"slices"
@@ -24,7 +25,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-var version = "0.3.0"
+var version = "0.3.1"
 
 // User: ett Tailscale-konto som får använda appen. Devices (stable ID) är
 // valfritt; anges det måste även enheten stämma. Det behövs för den förälder som
@@ -93,6 +94,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if *demo && *dev == "" {
+		log.Fatal("-demo går bara med -dev (sätter PIN 1234)")
+	}
 	if *demo {
 		if empty, err := st.Empty(ctx); err != nil {
 			log.Fatal(err)
@@ -127,8 +131,8 @@ func main() {
 		if *stateDir != "" {
 			log.Fatal("-dev går bara utan tsnet")
 		}
-		host, _, _ := strings.Cut(*dev, ":")
-		if host != "127.0.0.1" && host != "localhost" && host != "[::1]" {
+		host, _, err := net.SplitHostPort(*dev)
+		if err != nil || (host != "127.0.0.1" && host != "localhost" && host != "::1") {
 			log.Fatal("-dev lyssnar bara på loopback")
 		}
 		users := []User{
@@ -190,6 +194,7 @@ func main() {
 	}
 	a.who = tsWho{lc}
 	fqdn := strings.TrimSuffix(status.Self.DNSName, ".")
+	a.host = fqdn
 	ln80, err := ts.Listen("tcp", ":80")
 	if err != nil {
 		log.Fatal(err)

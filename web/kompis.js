@@ -41,8 +41,9 @@ const MOODS = {
 export function createKompis(host, { color = '#2f4fb8', accessory = 'inget', name = 'Plumpen' } = {}) {
   const id = 'k' + (++uidN);
   const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  const label = String(name).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
   host.innerHTML = `
-<svg class="kompis" viewBox="0 -40 200 260" role="img" aria-label="${name}" xmlns="${SVGNS}">
+<svg class="kompis" viewBox="0 -40 200 260" role="img" aria-label="${label}" xmlns="${SVGNS}">
   <defs>
     <clipPath id="${id}-e0"><ellipse cx="0" cy="0" rx="13" ry="15"/></clipPath>
     <clipPath id="${id}-e1"><ellipse cx="0" cy="0" rx="13" ry="15"/></clipPath>

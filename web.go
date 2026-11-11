@@ -95,6 +95,8 @@ type server struct {
 	users    map[string]User // login → användare
 	userList []User          // i konfigurationens ordning
 	index    []byte
+	host     string        // tailnet-namnet (fqdn); tomt = dev, http på loopback
+	heavy    chan struct{} // samtidiga tunga anrop (filer, AI)
 }
 
 func (s *server) setUsers(list []User) {
@@ -127,28 +129,63 @@ func (a *server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/store/{path...}", a.storeSet)
 	mux.HandleFunc("PATCH /api/store/{path...}", a.storeUpdate)
 	mux.HandleFunc("DELETE /api/store/{path...}", a.storeDelete)
-	mux.HandleFunc("POST /api/ai", a.aiHandler)
-	mux.HandleFunc("POST /api/files", a.filePut)
-	mux.HandleFunc("GET /api/files/{id}", a.fileGet)
+	if a.heavy == nil {
+		a.heavy = make(chan struct{}, 3)
+	}
+	mux.HandleFunc("POST /api/ai", a.limitHeavy(a.aiHandler))
+	mux.HandleFunc("POST /api/files", a.limitHeavy(a.filePut))
+	mux.HandleFunc("GET /api/files/{id}", a.limitHeavy(a.fileGet))
 	mux.HandleFunc("DELETE /api/files/{id}", a.fileDelete)
 	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "finns inte")
 	})
-	return a.identify(sameOrigin(headers(mux)))
+	return a.checkHost(a.identify(a.sameOrigin(headers(mux))))
 }
 
-// sameOrigin: skrivande anrop måste komma från appens egen sida (utöver
-// SameSite-kakan). Webbläsare skickar Origin på POST/PUT/PATCH/DELETE.
-func sameOrigin(next http.Handler) http.Handler {
+// checkHost: bara appens eget namn (skydd mot DNS-rebinding: en främmande
+// domän som pekas om till nodens adress får inget svar).
+func (a *server) checkHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.host != "" && r.Host != a.host && r.Host != a.host+":443" {
+			http.Error(w, "fel värdnamn", http.StatusMisdirectedRequest)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sameOrigin: skrivande anrop måste komma från appens egen sida. Barnets
+// identitet är nodens adress (WhoIs), inte en kaka, så SameSite skyddar inte
+// barnets anrop — därför krävs Origin eller Sec-Fetch-Site (webbläsare skickar
+// alltid något av dem på POST/PUT/PATCH/DELETE).
+func (a *server) sameOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			if o := r.Header.Get("Origin"); o != "" && o != "https://"+r.Host && o != "http://"+r.Host {
+			want := "https://" + a.host
+			if a.host == "" {
+				want = "http://" + r.Host
+			}
+			o, site := r.Header.Get("Origin"), r.Header.Get("Sec-Fetch-Site")
+			if !(o == want || (o == "" && site == "same-origin")) {
 				apiError(w, http.StatusForbidden, "fel ursprung")
 				return
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// limitHeavy: högst några tunga anrop åt gången (minnet: filer upp till
+// maxFileBytes, sidbilder base64-kodade).
+func (a *server) limitHeavy(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case a.heavy <- struct{}{}:
+			defer func() { <-a.heavy }()
+			h(w, r)
+		case <-r.Context().Done():
+		}
+	}
 }
 
 // noDirs: inga kataloglistningar.

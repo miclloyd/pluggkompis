@@ -57,7 +57,7 @@ type Auth struct {
 	mu       sync.Mutex
 	hashMu   sync.Mutex // en argon2-hash åt gången (minnet)
 	sessions map[string]session
-	failures map[string]*failure
+	fail     failure // gemensam för alla konton
 }
 
 func newAuth(st *Store) (*Auth, error) {
@@ -67,7 +67,7 @@ func newAuth(st *Store) (*Auth, error) {
   salt       BLOB NOT NULL,
   updated_at INTEGER NOT NULL
 )`)
-	return &Auth{db: st.db, now: st.now, sessions: map[string]session{}, failures: map[string]*failure{}}, err
+	return &Auth{db: st.db, now: st.now, sessions: map[string]session{}, fail: failure{period: firstLockout}}, err
 }
 
 func (a *Auth) hasPIN(ctx context.Context) (bool, error) {
@@ -90,12 +90,15 @@ ON CONFLICT(id) DO UPDATE SET hash = excluded.hash, salt = excluded.salt, update
 	return err
 }
 
-// checkPIN: rätt PIN nollställer felräkningen; fel PIN räknas per konto och
-// ger en spärr som fördubblas (5 min, 10 min … högst en timme).
-func (a *Auth) checkPIN(ctx context.Context, login, pin string) (ok bool, wait time.Duration, err error) {
+// checkPIN: ett försök åt gången (hashMu hålls genom hela kontrollen, så att
+// parallella anrop inte hinner förbi spärren innan felen räknats). Fel PIN
+// räknas för alla konton tillsammans och ger en spärr som fördubblas
+// (5 min, 10 min … högst en timme).
+func (a *Auth) checkPIN(ctx context.Context, pin string) (ok bool, wait time.Duration, err error) {
+	a.hashMu.Lock()
+	defer a.hashMu.Unlock()
 	a.mu.Lock()
-	f := a.failures[login]
-	if f != nil && a.now().Before(f.until) {
+	if f := a.fail; a.now().Before(f.until) {
 		wait = f.until.Sub(a.now())
 		a.mu.Unlock()
 		return false, wait, nil
@@ -106,29 +109,29 @@ func (a *Auth) checkPIN(ctx context.Context, login, pin string) (ok bool, wait t
 	if err := a.db.QueryRowContext(ctx, `SELECT hash, salt FROM pin WHERE id = 1`).Scan(&h, &salt); err != nil {
 		return false, 0, err
 	}
-	a.hashMu.Lock()
 	ok = pinFormat.MatchString(pin) && subtle.ConstantTimeCompare(hashPIN(pin, salt), h) == 1
-	a.hashMu.Unlock()
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if ok {
-		delete(a.failures, login)
+		a.fail = failure{period: firstLockout}
 		return true, 0, nil
 	}
-	f = a.failures[login]
-	if f == nil {
-		f = &failure{period: firstLockout}
-		a.failures[login] = f
-	}
-	f.n++
-	if f.n >= maxFailures {
-		f.n = 0
-		f.until = a.now().Add(f.period)
-		wait = f.period
-		f.period = min(2*f.period, maxLockout)
+	a.fail.n++
+	if a.fail.n >= maxFailures {
+		a.fail.n = 0
+		a.fail.until = a.now().Add(a.fail.period)
+		wait = a.fail.period
+		a.fail.period = min(2*a.fail.period, maxLockout)
 	}
 	return false, wait, nil
+}
+
+// endAll: alla upplåsta lägen avslutas (efter byte av PIN).
+func (a *Auth) endAll() {
+	a.mu.Lock()
+	a.sessions = map[string]session{}
+	a.mu.Unlock()
 }
 
 func (a *Auth) newSession(login string) string {
@@ -245,6 +248,7 @@ func (s *server) authSetPIN(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
+	s.auth.endAll()
 	setSessionCookie(w, s.auth.newSession(u.Login), 0)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -259,7 +263,7 @@ func (s *server) authUnlock(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	good, wait, err := s.auth.checkPIN(r.Context(), u.Login, pin)
+	good, wait, err := s.auth.checkPIN(r.Context(), pin)
 	if errors.Is(err, sql.ErrNoRows) {
 		apiError(w, http.StatusConflict, "Ingen PIN-kod är satt än.")
 		return

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -108,7 +109,7 @@ func TestChildWrites(t *testing.T) {
 func TestChildProfileFields(t *testing.T) {
 	_, h := testServer(t)
 	seedFamily(t, h)
-	w := do(h, child, "PUT", "/api/store/profiles/p1", `{"id":"p1","name":"Hackat","grade":9,"account":"barn2","theme":"dark","kompis":{"name":"Bläcky"}}`)
+	w := do(h, child, "PUT", "/api/store/profiles/p1", `{"id":"p1","name":"Hackat","grade":9,"account":"barn2","theme":"dark","kompis":{"color":"#2f4fb8","accessory":"mossa","name":"Bläcky"}}`)
 	if w.Code != 204 {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
@@ -191,6 +192,20 @@ func TestOrigin(t *testing.T) {
 	if r.Code != 403 {
 		t.Fatalf("främmande origin: %d", r.Code)
 	}
+	// Barnets anrop bär ingen kaka: utan Origin och Sec-Fetch-Site nekas det.
+	req := httptest.NewRequest("PUT", "/api/store/tests/t1/attempts/a1", strings.NewReader(`{}`))
+	req.RemoteAddr = child
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 403 {
+		t.Fatalf("utan origin: %d", w.Code)
+	}
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 403 {
+		t.Fatalf("cross-site: %d", w.Code)
+	}
 	if r := doReq(h, "PUT", "/api/store/tests/t1", `{}`, pc, "http://example.com"); r.Code != 204 {
 		t.Fatalf("egen origin: %d %s", r.Code, r.Body)
 	}
@@ -204,4 +219,78 @@ func doReq(h http.Handler, method, url, body string, c *http.Cookie, origin stri
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
+}
+
+// Granskarens blockerare: parallella fel-PIN får inte passera spärren.
+func TestPINConcurrent(t *testing.T) {
+	_, h := testServer(t)
+	unlock(t, h)
+	do(h, parent, "POST", "/api/auth/lock", "")
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	tried := 0
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := do(h, parent, "POST", "/api/auth/unlock", `{"pin":"0000"}`)
+			if !strings.Contains(w.Body.String(), "waitSeconds") {
+				mu.Lock()
+				tried++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if tried != maxFailures-1 {
+		t.Fatalf("%d försök prövades utan spärr, väntade %d", tried, maxFailures-1)
+	}
+	if w := do(h, parent, "POST", "/api/auth/unlock", `{"pin":"1234"}`); strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Fatal("rätt PIN släpptes igenom under spärren")
+	}
+}
+
+func TestPINChangeEndsSessions(t *testing.T) {
+	a, h := testServer(t)
+	old := unlock(t, h)
+	tok := a.auth.newSession("forälder@github") // en annan upplåst session
+	if w := doC(h, parent, "POST", "/api/auth/pin", `{"pin":"5678"}`, old); w.Code != 200 {
+		t.Fatalf("byte: %d %s", w.Code, w.Body)
+	}
+	if w := doC(h, parent, "PUT", "/api/store/tests/x", `{}`, &http.Cookie{Name: sessionCookie, Value: tok}); w.Code != 403 {
+		t.Fatalf("gammal session efter PIN-byte: %d", w.Code)
+	}
+}
+
+func TestHostCheck(t *testing.T) {
+	a, h := testServer(t)
+	a.host = "pluggkompis.tailnet.example"
+	for host, want := range map[string]int{"pluggkompis.tailnet.example": 200, "pluggkompis.tailnet.example:443": 200, "evil.example": 421} {
+		r := httptest.NewRequest("GET", "/api/config", nil)
+		r.Host = host
+		r.RemoteAddr = parent
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("%s: %d", host, w.Code)
+		}
+	}
+}
+
+func TestChildProfileValidation(t *testing.T) {
+	_, h := testServer(t)
+	seedFamily(t, h)
+	for _, body := range []string{
+		`{"theme":"<script>"}`,
+		`{"kompis":{"color":"red;background:url(x)","accessory":"inget","name":"A"}}`,
+		`{"kompis":{"color":"#2f4fb8","accessory":"inget","name":"\"><img src=x>långtlångtlångtlångt"}}`,
+		`{"kompis":{"color":"#2f4fb8","accessory":"krona","name":"A"}}`,
+	} {
+		if w := do(h, child, "PATCH", "/api/store/profiles/p1", body); w.Code != 400 {
+			t.Errorf("%s: %d", body, w.Code)
+		}
+	}
+	if w := do(h, child, "PATCH", "/api/store/profiles/p1", `{"theme":"dark","kompis":{"color":"#2f4fb8","accessory":"mossa","name":"Bläcky"}}`); w.Code != 204 {
+		t.Errorf("giltigt: %d %s", w.Code, w.Body)
+	}
 }

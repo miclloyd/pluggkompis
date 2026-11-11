@@ -70,6 +70,7 @@ func aiCall(h http.Handler, from string, c *http.Cookie, req map[string]any, ima
 	mw.Close()
 	r := httptest.NewRequest("POST", "/api/ai", &buf)
 	r.Header.Set("Content-Type", mw.FormDataContentType())
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
 	r.RemoteAddr = from
 	if c != nil {
 		r.AddCookie(c)
@@ -93,6 +94,9 @@ func TestAIChildLimit(t *testing.T) {
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `"text":"Hej!"`) {
 			t.Fatalf("anrop %d: %d %s", i, w.Code, w.Body)
 		}
+	}
+	if mt, _ := fake.last["max_tokens"].(float64); mt != childMaxTokens {
+		t.Fatalf("barnets max_tokens: %v", fake.last["max_tokens"])
 	}
 	if fake.key != "sk-test" || fake.last["model"] != defaultModels.Quick {
 		t.Fatalf("nyckel %q modell %v", fake.key, fake.last["model"])
@@ -229,5 +233,31 @@ func TestConfigWithAI(t *testing.T) {
 	w := do(h, child, "GET", "/api/config", "")
 	if !strings.Contains(w.Body.String(), `"ai":true`) || !strings.Contains(w.Body.String(), `"images":true`) {
 		t.Fatal(w.Body)
+	}
+}
+
+func TestAIChildNoImages(t *testing.T) {
+	_, h, fake, _ := aiServer(t, Limits{})
+	jpeg := append([]byte{0xFF, 0xD8, 0xFF, 0xE0}, make([]byte, 64)...)
+	w := aiCall(h, child, nil, map[string]any{"prompt": "x", "purpose": "child", "profileId": "p1"}, jpeg)
+	if w.Code != 400 || fake.calls != 0 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
+
+// Taket håller även när många anrop kommer samtidigt.
+func TestAILimitConcurrent(t *testing.T) {
+	_, h, fake, _ := aiServer(t, Limits{ChildPerDay: 5})
+	var wg sync.WaitGroup
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			aiCall(h, child, nil, map[string]any{"prompt": "x", "purpose": "child", "profileId": "p1"})
+		}()
+	}
+	wg.Wait()
+	if fake.calls != 5 {
+		t.Fatalf("%d anrop till Anthropic, taket är 5", fake.calls)
 	}
 }

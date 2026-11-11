@@ -61,6 +61,9 @@ func do(h http.Handler, from, method, url, body string) *httptest.ResponseRecord
 func doC(h http.Handler, from, method, url, body string, c *http.Cookie) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, url, strings.NewReader(body))
 	r.RemoteAddr = from
+	if method != "GET" {
+		r.Header.Set("Origin", "http://example.com") // som webbläsaren (dev-läge, httptest-värden)
+	}
 	if c != nil {
 		r.AddCookie(c)
 	}
@@ -204,6 +207,7 @@ func TestFilesAPI(t *testing.T) {
 	_, h := testServer(t)
 	pc := unlock(t, h)
 	r := httptest.NewRequest("POST", "/api/files", strings.NewReader("%PDF-1.4 test"))
+	r.Header.Set("Origin", "http://example.com")
 	r.RemoteAddr = parent
 	r.AddCookie(pc)
 	r.Header.Set("Content-Type", "application/pdf")
@@ -221,6 +225,7 @@ func TestFilesAPI(t *testing.T) {
 
 	// HTML förklädd som bild får aldrig visas inline från vår origin.
 	r = httptest.NewRequest("POST", "/api/files", strings.NewReader("<html><script>alert(1)</script>"))
+	r.Header.Set("Origin", "http://example.com")
 	r.RemoteAddr = parent
 	r.AddCookie(pc)
 	r.Header.Set("Content-Type", "text/html")
