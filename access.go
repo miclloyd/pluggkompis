@@ -100,8 +100,19 @@ func (s *server) canRead(r *http.Request, p string) error {
 		return err
 	}
 	switch {
-	case len(sg) == 1 && (sg[0] == "profiles" || sg[0] == "tests"):
+	case len(sg) == 1 && (sg[0] == "profiles" || sg[0] == "tests" || sg[0] == "tasks"):
 		return nil // listan filtreras
+	case sg[0] == "tasks" && len(sg) == 2:
+		d, err := s.st.Get(r.Context(), p)
+		if errors.Is(err, errNotFound) {
+			return nil // finns inte: null
+		}
+		if err != nil {
+			return err
+		}
+		if own[field(d, "profileId")] {
+			return nil
+		}
 	case sg[0] == "profiles" && len(sg) == 2:
 		if own[sg[1]] {
 			return nil
@@ -129,7 +140,7 @@ func (s *server) filterList(r *http.Request, p string, docs []json.RawMessage) (
 	if err != nil {
 		return nil, err
 	}
-	key := map[string]string{"profiles": "id", "tests": "profileId"}[sg[0]]
+	key := map[string]string{"profiles": "id", "tests": "profileId", "tasks": "profileId"}[sg[0]]
 	out := []json.RawMessage{}
 	for _, d := range docs {
 		if own[field(d, key)] {
@@ -139,14 +150,21 @@ func (s *server) filterList(r *http.Request, p string, docs []json.RawMessage) (
 	return out, nil
 }
 
-// canWrite: nil = fri skrivning; restrictProfile = bara barnets profilfält.
-func (s *server) canWrite(r *http.Request, p string) (restrictProfile bool, err error) {
+// Hur en skrivning utan upplåst föräldraläge begränsas.
+const (
+	writeFree    = ""
+	writeProfile = "profile" // bara barnets profilfält
+	writeTask    = "task"    // skoluppgift: ägare och stödnivå låsta
+)
+
+// canWrite: vilken begränsning skrivningen får, eller ett fel.
+func (s *server) canWrite(r *http.Request, p string) (mode string, err error) {
 	sg := segs(p)
 	if sg[0] == "settings" {
-		return false, errForbidden
+		return "", errForbidden
 	}
 	if s.parentMode(r) {
-		return false, nil
+		return writeFree, nil
 	}
 	u := currentUser(r)
 	deny := errForbidden
@@ -154,33 +172,108 @@ func (s *server) canWrite(r *http.Request, p string) (restrictProfile bool, err 
 		deny = errLocked
 	}
 	if r.Method == http.MethodDelete {
-		return false, deny
+		return "", deny
 	}
 	var own map[string]bool
 	if u.Role == "child" {
 		if own, err = s.ownProfiles(r.Context(), u); err != nil {
-			return false, err
+			return "", err
 		}
 	}
 	allowed := func(profileID string) bool { return profileID != "" && (u.Role == "parent" || own[profileID]) }
 	switch {
 	case sg[0] == "profiles" && len(sg) == 2:
 		if _, err := s.st.Get(r.Context(), p); err != nil {
-			return false, deny // nya profiler skapas bara i föräldraläget
+			return "", deny // nya profiler skapas bara i föräldraläget
 		}
 		if allowed(sg[1]) {
-			return true, nil
+			return writeProfile, nil
 		}
 	case sg[0] == "tests" && len(sg) == 4 && childCollections[sg[2]]:
 		owner, err := s.testOwner(r.Context(), sg[1])
 		if err != nil {
-			return false, err
+			return "", err
 		}
 		if allowed(owner) {
-			return false, nil
+			return writeFree, nil
 		}
+	case sg[0] == "tasks" && len(sg) == 2:
+		return writeTask, nil // ägaren kontrolleras i restrictedTask (behöver dokumentet)
 	}
-	return false, deny
+	return "", deny
+}
+
+// restrictedTask: barnet (eller en låst förälder) skriver en skoluppgift. Ägaren
+// (profileId) och stödnivån (support, förälderns val på profilen) går inte att
+// ändra; en ny uppgift får stödnivån från profilen.
+func (s *server) restrictedTask(r *http.Request, p string, body []byte) ([]byte, error) {
+	ctx := r.Context()
+	u := currentUser(r)
+	in, err := decodeObject(body)
+	if err != nil {
+		return nil, err
+	}
+	allowed := func(profileID string) (json.RawMessage, error) {
+		if _, _, _, e := docPath("profiles/" + profileID); e != nil {
+			return nil, errForbidden
+		}
+		prof, err := s.st.Get(ctx, "profiles/"+profileID)
+		if err != nil {
+			return nil, errForbidden
+		}
+		if u.Role == "child" {
+			own, err := s.ownProfiles(ctx, u)
+			if err != nil {
+				return nil, err
+			}
+			if !own[profileID] {
+				return nil, errForbidden
+			}
+		}
+		return prof, nil
+	}
+	cur, err := s.st.Get(ctx, p)
+	switch {
+	case err == nil:
+		var stored map[string]json.RawMessage
+		if json.Unmarshal(cur, &stored) != nil || stored == nil {
+			return nil, errBadDoc
+		}
+		var owner string
+		json.Unmarshal(stored["profileId"], &owner)
+		if _, err := allowed(owner); err != nil {
+			return nil, err
+		}
+		for _, k := range []string{"profileId", "support", "createdAt"} {
+			if v, ok := stored[k]; ok {
+				in[k] = v
+			} else {
+				delete(in, k)
+			}
+		}
+	case errors.Is(err, errNotFound):
+		if r.Method != http.MethodPut {
+			return nil, errNotFound
+		}
+		var owner string
+		json.Unmarshal(in["profileId"], &owner)
+		prof, err := allowed(owner)
+		if err != nil {
+			return nil, err
+		}
+		var pf struct {
+			TaskSupport int `json:"taskSupport"`
+		}
+		json.Unmarshal(prof, &pf)
+		if pf.TaskSupport < 1 || pf.TaskSupport > 3 {
+			pf.TaskSupport = 2
+		}
+		sup, _ := json.Marshal(pf.TaskSupport)
+		in["support"] = sup
+	default:
+		return nil, err
+	}
+	return json.Marshal(in)
 }
 
 // restrictedProfile: lägger bara barnets fält ovanpå den sparade profilen.

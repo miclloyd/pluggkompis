@@ -339,3 +339,53 @@ func TestChildNeverSeesBirthYear(t *testing.T) {
 		t.Errorf("efter barnets temabyte: %s", b)
 	}
 }
+
+// Skoluppgifter: barnet skapar och skriver sina egna, kan inte byta ägare eller
+// stödnivå, och ser inte syskonets.
+func TestTasks(t *testing.T) {
+	_, h := testServer(t)
+	pc := seedFamily(t, h)
+	doC(h, parent, "PATCH", "/api/store/profiles/p1", `{"taskSupport":3}`, pc)
+	if w := do(h, child, "PUT", "/api/store/tasks/k1", `{"profileId":"p1","support":1,"title":"Vikingar","versions":[]}`); w.Code != 204 {
+		t.Fatalf("skapa: %d %s", w.Code, w.Body)
+	}
+	b := do(h, child, "GET", "/api/store/tasks/k1", "").Body.String()
+	if !strings.Contains(b, `"support":3`) {
+		t.Fatalf("stödnivån ska komma från profilen: %s", b)
+	}
+	if w := do(h, child, "PUT", "/api/store/tasks/k1", `{"profileId":"p2","support":1,"title":"Vikingar","versions":[{"text":"a"}]}`); w.Code != 204 {
+		t.Fatalf("uppdatera: %d %s", w.Code, w.Body)
+	}
+	b = do(h, child, "GET", "/api/store/tasks/k1", "").Body.String()
+	if !strings.Contains(b, `"profileId":"p1"`) || !strings.Contains(b, `"support":3`) || !strings.Contains(b, `"text":"a"`) {
+		t.Fatalf("ägare och nivå ska ligga kvar: %s", b)
+	}
+	for name, c := range map[string]struct{ from, method, url, body string }{
+		"syskonet läser":    {child2, "GET", "/api/store/tasks/k1", ""},
+		"syskonet skriver":  {child2, "PUT", "/api/store/tasks/k1", `{"profileId":"p2"}`},
+		"skapa åt syskonet": {child, "PUT", "/api/store/tasks/k2", `{"profileId":"p2"}`},
+		"skapa utan profil": {child, "PUT", "/api/store/tasks/k3", `{"title":"x"}`},
+		"barnet raderar":    {child, "DELETE", "/api/store/tasks/k1", ""},
+		"djupare sökväg":    {child, "PUT", "/api/store/tasks/k1/x/y", `{}`},
+	} {
+		if w := do(h, c.from, c.method, c.url, c.body); w.Code != 403 {
+			t.Errorf("%s: %d %s", name, w.Code, w.Body)
+		}
+	}
+	if got := ids(t, do(h, child2, "GET", "/api/store/tasks?list=1", "").Body.String()); got != "" {
+		t.Errorf("syskonets lista: %q", got)
+	}
+	if got := ids(t, do(h, parent, "GET", "/api/store/tasks?list=1", "").Body.String()); got != "k1" {
+		t.Errorf("förälderns lista: %q", got)
+	}
+	// Låst förälder (lånad iPad) kan skapa åt vilket barn som helst, men inte välja nivå.
+	if w := do(h, parent, "PUT", "/api/store/tasks/k4", `{"profileId":"p2","support":3}`); w.Code != 204 {
+		t.Fatalf("låst förälder: %d", w.Code)
+	}
+	if b := do(h, parent, "GET", "/api/store/tasks/k4", "").Body.String(); !strings.Contains(b, `"support":2`) {
+		t.Errorf("förvald nivå 2: %s", b)
+	}
+	if w := doC(h, parent, "DELETE", "/api/store/tasks/k4", "", pc); w.Code != 204 {
+		t.Errorf("förälder raderar: %d", w.Code)
+	}
+}

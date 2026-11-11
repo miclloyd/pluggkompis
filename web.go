@@ -319,15 +319,21 @@ func (a *server) writeBody(w http.ResponseWriter, r *http.Request) ([]byte, erro
 	if _, _, _, err := docPath(p); err != nil {
 		return nil, err
 	}
-	restrict, err := a.canWrite(r, p)
+	mode, err := a.canWrite(r, p)
 	if err != nil {
 		return nil, err
 	}
 	body, err := readBody(w, r, maxDocBytes)
-	if err != nil || !restrict {
-		return body, err
+	if err != nil {
+		return nil, err
 	}
-	return a.restrictedProfile(r.Context(), p, body)
+	switch mode {
+	case writeProfile:
+		return a.restrictedProfile(r.Context(), p, body)
+	case writeTask:
+		return a.restrictedTask(r, p, body)
+	}
+	return body, nil
 }
 
 func (a *server) storeDelete(w http.ResponseWriter, r *http.Request) {

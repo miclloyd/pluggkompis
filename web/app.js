@@ -17,6 +17,7 @@ import { KompisStudio } from './studio.js';
 import { ExamMode } from './exam.js';
 import { Teach } from './teach.js';
 import { Sheet } from './sheet.js';
+import { TaskList, TaskView, ParentTasks, SUPPORT_LABEL } from './tasks.js';
 import { PrintSheet } from './print.js';
 import { buildPlan, allowedGoals, minutesOnDay, DEFAULT_SCHEDULE, WEEKDAYS, PHASE_LABEL } from './plan.js';
 import { interpretMaterial, proposeGoals, buildBank, buildHighBank, buildSortBank, StepError } from './pipeline.js';
@@ -94,6 +95,7 @@ function App() {
     case 'practice': view = html`<${Practice} ...${ctx} testId=${route.testId} profileId=${route.profileId} />`; break;
     case 'exam': view = html`<${ExamMode} ...${ctx} testId=${route.testId} profileId=${route.profileId} Question=${Question} />`; break;
     case 'teach': view = html`<${Teach} ...${ctx} testId=${route.testId} profileId=${route.profileId} />`; break;
+    case 'task': view = html`<${TaskView} ...${ctx} profileId=${route.profileId} taskId=${route.taskId} />`; break;
     case 'kompis': view = html`<${KompisStudio} ...${ctx} profileId=${route.profileId} onTheme=${t => { setTheme(t); lsSet('pk.theme', t); }} />`; break;
     default: view = html`<${Start} ...${ctx} />`;
   }
@@ -285,6 +287,7 @@ function ParentHome({ env, go }) {
       </ul>
       ${editing && html`<${ProfileForm} env=${env} profile=${editing} accounts=${accounts} profiles=${profiles} onDone=${() => { setEditing(null); load(); }} />`}
     </section>
+    <${ParentTasks} env=${env} profiles=${profiles} />
     ${env.usage && html`<${AiUsage} env=${env} profiles=${profiles} tests=${tests} />`}`;
 }
 
@@ -364,6 +367,10 @@ function ProfileForm({ env, profile, accounts, profiles = [], onDone }) {
     <label for="pf-name">Namn</label><input id="pf-name" value=${p.name} onInput=${e => setP({ ...p, name: e.target.value })} />
     <${BirthFields} year=${p.birthYear} month=${p.birthMonth} offset=${p.gradeOffset} prefix="pf"
       onYear=${v => setP({ ...p, birthYear: Number(v) })} onMonth=${v => setP({ ...p, birthMonth: v ? Number(v) : null })} onOffset=${v => setP({ ...p, gradeOffset: v })} />
+    <div><label for="pf-ts">Stöd på skoluppgifter</label>
+      <select id="pf-ts" value=${String(p.taskSupport || 2)} onChange=${e => setP({ ...p, taskSupport: Number(e.target.value) })}>
+        ${[1, 2, 3].map(n => html`<option value=${n}>${n} ${SUPPORT_LABEL[n]}</option>`)}</select>
+      <p class="hint">1: bara frågor. 2: frågor och vilka stycken. 3: även vilken sorts fel, aldrig vilket ord.</p></div>
     ${accounts && html`<div><label for="pf-account">Barnets konto</label>
       <select id="pf-account" value=${p.account || ''} onChange=${e => setP({ ...p, account: e.target.value || undefined })}>
         <option value="">Inget (övar på en förälders enhet)</option>
@@ -1006,6 +1013,7 @@ function ChildHome({ env, go, profileId }) {
         </span>
       </button>`)}
     </div>
+    <${TaskList} env=${env} go=${go} profileId=${profileId} />
     <p class="center"><button class="btn ghost small" onClick=${() => go({ name: 'start' })}>Byt person</button></p>
     ${menu && html`<${Sheet} title=${menu.subject} onClose=${() => setMenu(null)}>
       <div class="test-menu" style=${coverVar(menu.subject)}>

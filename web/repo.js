@@ -10,6 +10,7 @@
 //   tests/{id}/events/{eid}         egna nivåhopp (påverkar nivån, ingår i omräkning)
 //   tests/{id}/chats/{cid}          samtal i "Förklara mer" och "Lär ut det" (kind: teach), synliga för föräldern
 //   tests/{id}/exams/{xid}          provlägen med svar och poäng per fråga
+//   tasks/{id}                      egna skoluppgifter: versioner, feedback, barnets kommentarer
 
 export const SCHEMA_VERSION = 1;
 
@@ -61,6 +62,11 @@ export function createRepo(store) {
     listAttempts: id => store.list(sub(id, 'attempts')),
     saveAttempt: (id, a) => save(`${sub(id, 'attempts')}/${a.id}`, a),
     updateAttempt: (id, aid, patch) => store.update(`${sub(id, 'attempts')}/${aid}`, patch),
+
+    listTasks: () => store.list('tasks'),
+    getTask: id => store.get(`tasks/${id}`),
+    saveTask: t => save(`tasks/${t.id}`, { createdAt: now(), ...t }),
+    deleteTask: id => store.delete(`tasks/${id}`),
 
     async deleteTest(id) {
       for (const coll of ['materials', 'goals', 'banks', 'mastery', 'attempts', 'events', 'chats', 'exams']) {
