@@ -127,6 +127,12 @@ export async function buildBookletPdf({ libs, test, goals, banks, mastery, profi
           it.items.forEach(([t]) => { text(`${t}  ______________`, { x: M + 6, width: CW - 6, gap: 1 }); });
           key.push(`${n}. ${it.items.map(([t, c]) => `${t}: ${c}`).join('; ')}`);
           y += 2;
+        } else if (it.kind === 'order') {
+          text('Skriv 1 framför det som kommer först, 2 framför nästa och så vidare.', { size: 10, color: ink2, x: M + 6, width: CW - 6 });
+          const shown = shuffle(it.steps);
+          shown.forEach(t => { text(`___  ${t}`, { x: M + 6, width: CW - 6, gap: 1 }); });
+          key.push(`${n}. ${shown.map(t => it.steps.indexOf(t) + 1).join(', ')}`);
+          y += 2;
         } else if (it.kind === 'cloze') {
           key.push(`${n}. ${it.answer}`);
           y += 2;
@@ -164,6 +170,7 @@ export function attemptsCsv({ attempts, goals, banks = {} }) {
   const shown = a => {
     const it = item(a);
     if (a.kind === 'mcq' && Number.isInteger(a.answer) && it?.options?.[a.answer] != null) return it.options[a.answer];
+    if (Array.isArray(a.answer)) return a.answer.join(' → ');
     if (typeof a.answer === 'object' && a.answer) return Object.entries(a.answer).map(([x, y]) => `${x} – ${y}`).join(' | ');
     return a.answer;
   };

@@ -2,7 +2,7 @@
 // Versionen sparas på allt som genereras, så att gamla frågor kan spåras till sin prompt.
 import { GOAL_TYPES, TYPE_MAX, hasSpellingLure } from './engine.js';
 
-export const PROMPT_VERSION = 'p2.2';
+export const PROMPT_VERSION = 'p2.3';
 
 const json = v => JSON.stringify(v);
 
@@ -168,6 +168,8 @@ Frågetyper (JSON):
 - {"goal":"g1","level":2,"kind":"cloze","q":"Mening med ___ där ordet saknas.","answer":"ordet","accept":["andra godtagbara former"],"explain":"...","src":{...}}
 - {"goal":"g1","level":2,"kind":"match","q":"Para ihop ...","pairs":[["vänster","höger"],["...","..."],["...","..."]],"explain":"...","src":{...}}
 - {"goal":"g1","level":3,"kind":"write","q":"Översätt till ...: ...","answer":"...","accept":[],"explain":"...","src":{...}}
+- Bara när underlaget har en verklig ordning (tidslinje, förlopp, steg i en process, händelser i en berättelse), nivå 2, högst en av de sex frågorna per mål:
+  {"goal":"g1","level":2,"kind":"order","q":"Sätt händelserna i rätt ordning","steps":["det som kommer först","…","det som kommer sist"],"explain":"...","src":{...}} med 3–6 steg i RÄTT ordning. Använd det inte för saker som saknar en bestämd ordning.
 - Bara för samband-mål som jämför två saker, nivå 2, en av de sex frågorna:
   {"goal":"g1","level":2,"kind":"sort","q":"Sortera påståendena","categories":["A","B","Båda"],"items":[["påstående","A"],["påstående","Båda"]],"explain":"...","src":{...}} med 5–8 påståenden.
 
@@ -205,6 +207,15 @@ export function validateBank(out, goals, validRefs) {
       const v = validSort(it);
       if (v) { errors.push(`${tag}: ${v}`); continue; }
       byGoal[goal.id].push({ ...base, categories: it.categories.map(String), items: it.items.map(([t, c]) => [String(t).trim(), String(c)]) });
+      continue;
+    }
+    if (it.kind === 'order') {
+      const steps = (Array.isArray(it.steps) ? it.steps : []).map(x => String(x).trim()).filter(Boolean);
+      if (steps.length < 3 || steps.length > 6) { errors.push(`${tag}: sätt i ordning ska ha 3–6 steg.`); continue; }
+      if (new Set(steps.map(x => x.toLowerCase())).size !== steps.length) { errors.push(`${tag}: stegen är inte unika.`); continue; }
+      if (level !== 2) { errors.push(`${tag}: sätt i ordning hör till nivå 2.`); continue; }
+      if (byGoal[goal.id].some(x => x.kind === 'order')) { errors.push(`${tag}: högst en ordningsfråga per mål.`); continue; }
+      byGoal[goal.id].push({ ...base, steps });
       continue;
     }
     if (it.kind === 'mcq') {

@@ -25,7 +25,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-var version = "0.5.0"
+var version = "0.6.0"
 
 // User: ett Tailscale-konto som får använda appen. Devices (stable ID) är
 // valfritt; anges det måste även enheten stämma. Det behövs för den förälder som

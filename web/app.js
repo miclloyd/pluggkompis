@@ -3,10 +3,11 @@ import { loadEnvironment } from './env.js';
 import { createRepo, uid } from './repo.js';
 import { createLocalAuth } from './auth.js';
 import { gradeOf, birthYearFor } from './grade.js';
+import { withDictation, speak, SpeakButton, readAloudText } from './speech.js';
 import { readFile, fileKind } from './extract.js';
 import { summarize, relDay, pct } from './stats.js';
 import { coverVar, Ring, Stamp, AnswerTrail, IconBook, IconChat, IconMic } from './ui.js';
-import { MatchQuestion, SortQuestion, IntroCard } from './questions.js';
+import { MatchQuestion, SortQuestion, OrderQuestion, IntroCard } from './questions.js';
 import { SourceSheet } from './source.js';
 import { ExplainSheet } from './explain.js';
 import { Kompis, KompisDock, KOMPIS_DEFAULT } from './buddy.js';
@@ -692,6 +693,7 @@ function givenText(item, given) {
   if (!item) return String(given ?? '');
   if (item.kind === 'mcq') return item.options[given] ?? '';
   if (item.kind === 'match') return item.pairs.map(([l]) => `${l} – ${(given || {})[l] || '?'}`).join('\n');
+  if (item.kind === 'order' && Array.isArray(given)) return given.map((s, i) => `${i + 1}. ${s}`).join('\n');
   return String(given ?? '');
 }
 
@@ -1049,7 +1051,7 @@ function Practice({ env, go, testId, profileId }) {
         repo.getTest(testId), repo.listGoals(testId), repo.listBanks(testId), repo.listMastery(testId), repo.listMaterials(testId), repo.listProfiles(),
         repo.listAttempts(testId).catch(() => []), repo.listEvents(testId).catch(() => []),
       ]);
-      const s = { test, goals: goals.filter(g => !g.removed), banks, mastery, materials, attempts, events, profile: profiles.find(p => p.id === profileId) };
+      const s = { test, goals: goals.filter(g => !g.removed), banks: withDictation(goals, banks), mastery, materials, attempts, events, profile: profiles.find(p => p.id === profileId) };
       setState(s);
       setCurrent(choose(s, []));
     })();
@@ -1287,10 +1289,17 @@ function Practice({ env, go, testId, profileId }) {
   </div>`;
 }
 
-function Question({ item, disabled, onAnswer, result, hideGiven }) {
+function Question(props) {
+  const { item } = props;
+  // Uppläsning av frågan (inte vid diktamen, där ordet är själva uppgiften).
+  return html`${item.kind !== 'dictation' && html`<div class="read-aloud"><${SpeakButton} text=${readAloudText(item)} label="Läs upp frågan" /></div>`}<${QuestionBody} ...${props} />`;
+}
+
+function QuestionBody({ item, disabled, onAnswer, result, hideGiven }) {
   if (item.kind === 'mcq') return html`<${Mcq} item=${item} disabled=${disabled} onAnswer=${onAnswer} result=${result} />`;
   if (item.kind === 'match') return html`<${MatchQuestion} item=${item} disabled=${disabled} onAnswer=${onAnswer} result=${result} />`;
   if (item.kind === 'sort') return html`<${SortQuestion} item=${item} disabled=${disabled} onAnswer=${onAnswer} result=${result} />`;
+  if (item.kind === 'order') return html`<${OrderQuestion} item=${item} disabled=${disabled} onAnswer=${onAnswer} result=${result} />`;
   if (isFree(item)) return html`<${FreeAnswer} item=${item} disabled=${disabled} onAnswer=${onAnswer} />`;
   return html`<${TextAnswer} item=${item} disabled=${disabled} onAnswer=${onAnswer} result=${result} hideGiven=${hideGiven} />`;
 }
@@ -1309,10 +1318,11 @@ function Mcq({ item, disabled, onAnswer, result }) {
 function TextAnswer({ item, disabled, onAnswer, result, hideGiven }) {
   const [v, setV] = useState('');
   const ref = useRef();
-  useEffect(() => { setV(''); ref.current?.focus(); }, [item.id]);
+  useEffect(() => { setV(''); ref.current?.focus(); if (item.kind === 'dictation') speak(item.answer, item.lang, 0.8); }, [item.id]);
   const parts = item.kind === 'cloze' ? item.q.split('___') : null;
   return html`<form class="text-answer" onSubmit=${e => { e.preventDefault(); if (v.trim()) onAnswer(v); }}>
     <h2 class="q">${parts ? html`${parts[0]}<span class="gap">${result && !hideGiven ? result.given : ' '.repeat(8)}</span>${parts[1]}` : item.q}</h2>
+    ${item.kind === 'dictation' && html`<p class="dictation"><${SpeakButton} text=${item.answer} lang=${item.lang} label="Lyssna igen" /></p>`}
     <label class="sr" for="ans">Ditt svar</label>
     <input id="ans" ref=${ref} class="answer" autocomplete="off" autocapitalize="off" spellcheck="false" disabled=${disabled} value=${hideGiven ? '' : v} onInput=${e => setV(e.target.value)} placeholder=${hideGiven ? 'Öva på stavningen nedanför' : 'Skriv ditt svar'} />
     ${!disabled && html`<button class="btn primary" disabled=${!v.trim()}>Svara</button>`}

@@ -317,6 +317,7 @@ export function gradeLocal(item, answer) {
     }
     case 'cloze':
     case 'write':
+    case 'dictation':
       return compareText(answer, [item.answer, ...(item.accept || [])]);
     case 'match': {
       const pairs = item.pairs || [];
@@ -335,9 +336,31 @@ export function gradeLocal(item, answer) {
       if (right >= list.length - 1) return { score: 0.5, verdict: 'almost', note: `${right} av ${list.length} rätt sorterade.` };
       return { score: 0, verdict: 'wrong', note: `${right} av ${list.length} rätt sorterade.` };
     }
+    case 'order': return gradeOrder(item.steps || [], answer);
     default:
       return { score: 0, verdict: 'wrong' };
   }
+}
+
+// Sätt i ordning (materialprofil fakta: tidslinjer, förlopp). answer: stegen i barnets
+// ordning. Rätt ordning ger 1; ett steg på fel ställe (längsta rätt ordnade följd är
+// n − 1) ger nästan rätt.
+export function gradeOrder(steps, answer) {
+  const a = Array.isArray(answer) ? answer : [];
+  const n = steps.length;
+  if (n && a.length === n && a.every((s, i) => s === steps[i])) return { score: 1, verdict: 'right' };
+  const pos = a.map(s => steps.indexOf(s)).filter(i => i >= 0);
+  // Längsta stigande delföljd = flest steg som redan står i rätt inbördes ordning.
+  const tails = [];
+  for (const x of pos) {
+    let lo = 0, hi = tails.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (tails[mid] < x) lo = mid + 1; else hi = mid; }
+    tails[lo] = x;
+  }
+  const inPlace = a.filter((s, i) => s === steps[i]).length;
+  const note = `${inPlace} av ${n} på rätt plats.`;
+  if (n >= 3 && a.length === n && tails.length >= n - 1) return { score: 0.5, verdict: 'almost', note };
+  return { score: 0, verdict: 'wrong', note };
 }
 
 export function correctAnswerText(item) {
@@ -345,9 +368,11 @@ export function correctAnswerText(item) {
   switch (item.kind) {
     case 'mcq': return item.options[item.answer];
     case 'cloze':
-    case 'write': return item.answer;
+    case 'write':
+    case 'dictation': return item.answer;
     case 'match': return item.pairs.map(([l, r]) => `${l} – ${r}`).join('\n');
     case 'sort': return item.categories.map(c => `${c}: ${item.items.filter(i => i[1] === c).map(i => i[0]).join('; ')}`).join('\n');
+    case 'order': return item.steps.map((s, i) => `${i + 1}. ${s}`).join('\n');
     default: return '';
   }
 }

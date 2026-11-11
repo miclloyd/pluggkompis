@@ -8,7 +8,7 @@ const MAX_ROUNDS = 3;
 
 // Gäller skrivna svar: glosor alltid när svaret inte var rätt, andra ämnen när felet var stavningen.
 export function needsCoverWrite(item, goal, result) {
-  if (!['cloze', 'write'].includes(item.kind) || !result || result.verdict === 'right') return false;
+  if (!['cloze', 'write', 'dictation'].includes(item.kind) || !result || result.verdict === 'right') return false;
   if (goal.type === 'glosa') return true;
   return result.verdict === 'almost' && /stavning|accent|prickar/i.test(result.note || '');
 }

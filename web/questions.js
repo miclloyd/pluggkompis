@@ -114,6 +114,31 @@ export function SortQuestion({ item, disabled, onAnswer, result }) {
       <button class="btn primary" disabled=${pool.length > 0} onClick=${() => onAnswer(placed)}>Svara</button></div>`}`;
 }
 
+// Sätt i ordning: barnet flyttar stegen upp och ned (knappar fungerar på iPad utan
+// dragningar). Startordningen är aldrig redan rätt.
+export function OrderQuestion({ item, disabled, onAnswer, result }) {
+  const start = useMemo(() => {
+    let o = shuffle(item.steps);
+    for (let i = 0; i < 5 && o.every((s, k) => s === item.steps[k]); i++) o = shuffle(item.steps);
+    if (o.every((s, k) => s === item.steps[k])) o = [...o.slice(1), o[0]];
+    return o;
+  }, [item.id]);
+  const [order, setOrder] = useState(start);
+  useEffect(() => { setOrder(start); }, [item.id]);
+  const shown = result ? (Array.isArray(result.given) ? result.given : order) : order;
+  const move = (i, d) => setOrder(o => { const n = o.slice(); [n[i], n[i + d]] = [n[i + d], n[i]]; return n; });
+  return html`<h2 class="q">${item.q}</h2>
+    <p class="small muted hint-line">Flytta stegen med pilarna tills de står i rätt ordning, det första överst.</p>
+    <ol class="order-list">${shown.map((s, i) => html`<li class=${'order-item' + (result ? (s === item.steps[i] ? ' ok' : ' no') : '')}>
+      <span class="order-n">${i + 1}</span><span class="order-text">${s}</span>
+      ${!disabled && html`<span class="order-btns">
+        <button class="btn ghost small" aria-label=${`Flytta upp: ${s}`} disabled=${i === 0} onClick=${() => move(i, -1)}>↑</button>
+        <button class="btn ghost small" aria-label=${`Flytta ned: ${s}`} disabled=${i === shown.length - 1} onClick=${() => move(i, 1)}>↓</button></span>`}
+    </li>`)}</ol>
+    ${result && result.verdict !== 'right' && html`<p class="small">Rätt ordning: ${item.steps.map((s, i) => html`<span class="fix">${i + 1}. ${s} </span>`)}</p>`}
+    ${!disabled && html`<div class="actions"><button class="btn primary" onClick=${() => onAnswer(order)}>Svara</button></div>`}`;
+}
+
 // Begreppskort: visas första gången ett mål dyker upp. Ingen rättning, bara bekanta sig.
 export function IntroCard({ goal, item, onDone }) {
   const [flipped, setFlipped] = useState(false);

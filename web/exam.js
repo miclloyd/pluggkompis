@@ -1,6 +1,7 @@
 // Provläge: ett pass som liknar provet. Inga ledtrådar, inget material, inget facit och ingen
 // kompis under tiden. Allt rättas på slutet. Resultatet sparas för föräldern, och svaren räknas
 // in i dagens minuter, men provläget flyttar inte nivåerna (det är en mätning, inte övning).
+import { withDictation } from './speech.js';
 import { html, useState, useEffect, useRef } from './lib.js';
 import {
   practiceMax, hasSpellingLure, shuffle, gradeLocal, isFree, correctAnswerText, newMastery,
@@ -87,7 +88,7 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
         repo.listAttempts(testId).catch(() => []),
       ]);
       const active = goals.filter(g => !g.removed);
-      let picks = pickExam({ goals: active, mastery, banks });
+      let picks = pickExam({ goals: active, mastery, banks: withDictation(active, banks) });
       // Utan AI går fritext inte att rätta, så då används bara frågor som rättas direkt.
       if (!env.ai) picks = picks.filter(p => !isFree(p.item));
       const sec = secondsPerAnswer(attempts);
@@ -222,7 +223,7 @@ export const goalLabel = t => String(t).replace(/^kunna\s+/i, '').replace(/^./, 
 // Barnets eget svar i genomgången. Felstavningar visas inte igen (de kan fastna).
 function shownAnswer(r, g) {
   if (r.answer == null) return '';
-  if ((r.item.kind === 'cloze' || r.item.kind === 'write') && g.verdict !== 'right') return '';
+  if (['cloze', 'write', 'dictation'].includes(r.item.kind) && g.verdict !== 'right') return '';
   if (r.item.kind === 'mcq') return r.item.options[r.answer];
   if (typeof r.answer === 'object') return '';
   return isFree(r.item) ? `”${String(r.answer).slice(0, 160)}${String(r.answer).length > 160 ? '…' : ''}”` : String(r.answer);
