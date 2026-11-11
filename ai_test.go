@@ -358,6 +358,10 @@ func TestAIStreamErrors(t *testing.T) {
 	}
 	n := 0
 	sse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if n >= len(events) {
+			http.Error(w, "oväntat anrop", 500)
+			return
+		}
 		for _, ev := range events[n] {
 			fmt.Fprintf(w, "data: %s\n\n", ev)
 		}
@@ -376,9 +380,10 @@ func TestAIStreamErrors(t *testing.T) {
 	if w := aiCall(h, child, nil, req); w.Code != 429 {
 		t.Fatalf("taket med stream: %d %s", w.Code, w.Body)
 	}
-	var st string
-	a.st.db.QueryRow(`SELECT status FROM ai_log WHERE status <> 'limit' ORDER BY ts DESC LIMIT 1`).Scan(&st)
-	if st != "upstream_error" {
-		t.Fatalf("loggat: %q", st)
+	// Båda avbrotten (utan message_stop och med error-event) loggas som fel.
+	var n2 int
+	a.st.db.QueryRow(`SELECT COUNT(*) FROM ai_log WHERE status = 'upstream_error'`).Scan(&n2)
+	if n2 != 2 {
+		t.Fatalf("loggade fel: %d", n2)
 	}
 }
