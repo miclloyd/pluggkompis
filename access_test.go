@@ -85,7 +85,7 @@ func TestChildWrites(t *testing.T) {
 	denied := map[string]string{
 		"PUT /api/store/tests/t2/attempts/a9":    `{}`, // syskonets prov
 		"PUT /api/store/tests/t1":                `{"profileId":"p1"}`,
-		"PATCH /api/store/tests/t1":              `{"testDate":"2026-12-01"}`,
+		"PATCH /api/store/tests/t1":              `{"testDate":"2030-12-01"}`,
 		"PUT /api/store/tests/t1/goals/g1":       `{}`,
 		"PUT /api/store/tests/t1/banks/g1":       `{"items":[]}`,
 		"PUT /api/store/tests/t1/materials/m1":   `{}`,
@@ -303,12 +303,12 @@ func TestChildGrade(t *testing.T) {
 		now     string
 		want    int
 	}{
-		// Fiktiv framtid (läsåret 2040/41): inga årtal som kan vara verkliga barns.
-		{2026, 0, "2040-11-11", 8},
-		{2026, 0, "2041-06-30", 8},
-		{2026, 0, "2041-07-01", 9}, // läsåret byts 1 juli
-		{2026, -1, "2040-11-11", 7},
-		{2040, 0, "2040-11-11", 0},
+		// Fiktiv framtid (läsåret 2044/45): inga årtal som kan vara verkliga barns.
+		{2030, 0, "2044-11-11", 8},
+		{2030, 0, "2045-06-30", 8},
+		{2030, 0, "2045-07-01", 9}, // läsåret byts 1 juli
+		{2030, -1, "2044-11-11", 7},
+		{2044, 0, "2044-11-11", 0},
 	} {
 		if g := childGrade(c.by, c.off, at(c.now)); g != c.want {
 			t.Errorf("%d%+d %s: %d, väntade %d", c.by, c.off, c.now, g, c.want)
