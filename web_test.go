@@ -246,3 +246,14 @@ func TestNoListing(t *testing.T) {
 		}
 	}
 }
+
+func TestHealthz(t *testing.T) {
+	_, h := testServer(t)
+	// Okänd nod (WhoIs misslyckas) får bara "ok".
+	if w := do(h, "9.9.9.9:1", "GET", "/healthz", ""); w.Code != 200 || w.Body.String() != "ok" {
+		t.Fatalf("%d %q", w.Code, w.Body)
+	}
+	if w := do(h, "9.9.9.9:1", "GET", "/healthz/../api/config", ""); w.Code == 200 && strings.Contains(w.Body.String(), "features") {
+		t.Fatal("healthz släppte igenom något annat")
+	}
+}

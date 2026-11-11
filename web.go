@@ -150,6 +150,17 @@ func (a *server) checkHost(next http.Handler) http.Handler {
 			http.Error(w, "fel värdnamn", http.StatusMisdirectedRequest)
 			return
 		}
+		// Övervakningen (Kuma på edge) är inte en familjeenhet: /healthz svarar
+		// utan WhoIs, men bara "ok" eller ett fel — ingen data.
+		if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
+			if err := a.st.db.PingContext(r.Context()); err != nil {
+				http.Error(w, "databasen svarar inte", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			w.Write([]byte("ok"))
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
