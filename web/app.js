@@ -7,7 +7,8 @@ import { withDictation, speak, SpeakButton, readAloudText } from './speech.js';
 import { readFile, fileKind } from './extract.js';
 import { summarize, relDay, pct } from './stats.js';
 import { coverVar, Ring, Stamp, AnswerTrail, IconBook, IconChat, IconMic } from './ui.js';
-import { MatchQuestion, SortQuestion, OrderQuestion, IntroCard } from './questions.js';
+import { MatchQuestion, SortQuestion, OrderQuestion, MathQuestion, IntroCard } from './questions.js';
+import { SKILLS } from './math.js';
 import { SourceSheet } from './source.js';
 import { ExplainSheet } from './explain.js';
 import { Kompis, KompisDock, KOMPIS_DEFAULT } from './buddy.js';
@@ -892,6 +893,8 @@ function GoalEditor({ goal, materials, locked, onSave, mastery, bank }) {
         <option value="1">Mindre viktigt</option><option value="2">Viktigt</option><option value="3">Mycket viktigt</option></select>
     </div>
     <textarea aria-label="Lärandemål" rows="2" value=${g.text} onInput=${e => upd({ text: e.target.value })}></textarea>
+    ${g.type === 'matematik' && html`<select aria-label="Färdighet" value=${g.skill || ''} onChange=${e => upd({ skill: e.target.value })}>
+      <option value="">Välj färdighet</option>${Object.entries(SKILLS).map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select>`}
     ${g.type === 'glosa' && html`<div class="row2">
       <input aria-label="Ord" value=${g.term || ''} onInput=${e => upd({ term: e.target.value })} placeholder="Ord" />
       <input aria-label="Översättning" value=${g.translation || ''} onInput=${e => upd({ translation: e.target.value })} placeholder="Översättning" /></div>`}
@@ -912,15 +915,19 @@ function AddGoal({ materials, onAdd }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [type, setType] = useState('fakta');
+  const [skill, setSkill] = useState('');
   const [note, setNote] = useState('');
   if (!open) return html`<button class="btn ghost" onClick=${() => setOpen(true)}>Lägg till eget mål</button>`;
   const first = materials[0];
   return html`<div class="sheet form inset">
     <label for="ag-text">Lärandemål</label><input id="ag-text" placeholder="Kunna ..." value=${text} onInput=${e => setText(e.target.value)} />
     <label for="ag-type">Typ</label><select id="ag-type" value=${type} onChange=${e => setType(e.target.value)}>${GOAL_TYPES.filter(t => t !== 'glosa').map(t => html`<option value=${t}>${TYPE_LABEL[t]}</option>`)}</select>
+    ${type === 'matematik' && html`<label for="ag-skill">Färdighet</label><select id="ag-skill" value=${skill} onChange=${e => setSkill(e.target.value)}>
+      <option value="">Välj färdighet</option>${Object.entries(SKILLS).map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select>
+      <p class="hint">Uppgifterna och facit räknas fram av programmet, inte av AI.</p>`}
     <label for="ag-note">Underlag (valfritt)</label><textarea id="ag-note" rows="2" placeholder="Om svaret inte står i materialet, skriv det här" value=${note} onInput=${e => setNote(e.target.value)}></textarea>
     <div class="actions"><button class="btn ghost" onClick=${() => setOpen(false)}>Avbryt</button>
-      <button class="btn primary" disabled=${!text.trim()} onClick=${() => { onAdd({ id: 'g' + uid(), text: text.trim(), type, weight: 2, sources: first ? [{ m: first.ref, p: 1 }] : [], enoughMaterial: !!note.trim() || !!first, parentNote: note.trim(), note: '', approved: false, removed: false }); setOpen(false); setText(''); setNote(''); }}>Lägg till</button></div>
+      <button class="btn primary" disabled=${!text.trim() || (type === 'matematik' && !skill)} onClick=${() => { onAdd({ id: 'g' + uid(), text: text.trim(), type, ...(type === 'matematik' ? { skill } : {}), weight: 2, sources: first ? [{ m: first.ref, p: 1 }] : [], enoughMaterial: !!note.trim() || !!first, parentNote: note.trim(), note: '', approved: false, removed: false }); setOpen(false); setText(''); setNote(''); }}>Lägg till</button></div>
   </div>`;
 }
 
@@ -1263,9 +1270,9 @@ function Practice({ env, go, testId, profileId }) {
       <p class="q-goal"><span class="q-subject">${state.test.subject}</span>
         <span class="q-level">Nivå ${item.level}<${LevelPips} goal=${goal} mastery=${current.mastery || { level: 1 }} bank=${state.banks[goal.id]} /></span>
         ${isFree(item) && html`<span class="q-free">Svara med egna ord</span>`}
-        ${helped && !result && html`<span class="q-helped">Med hjälp av materialet</span>`}</p>
-      <${Question} item=${item} disabled=${!!result} onAnswer=${answer} result=${result} hideGiven=${needsCoverWrite(item, goal, result)} />
-      ${!result && html`<div class="q-tools">
+        ${helped && !result && html`<span class="q-helped">${item.kind === 'math' ? 'Med ledtråd' : 'Med hjälp av materialet'}</span>`}</p>
+      <${Question} item=${item} disabled=${!!result} onAnswer=${answer} result=${result} hideGiven=${needsCoverWrite(item, goal, result)} onHelp=${() => setHelped(true)} />
+      ${!result && item.src && html`<div class="q-tools">
         <button class="tool" onClick=${() => { setHelped(true); setSheet('source'); }}>
           <${IconBook} /> Läs i materialet</button>
         ${isFree(item) && html`<span class="small muted mic-tip"><${IconMic} /> Du kan prata in svaret med mikrofonen på tangentbordet.</span>`}
@@ -1303,7 +1310,8 @@ function Question(props) {
   return html`${item.kind !== 'dictation' && html`<div class="read-aloud"><${SpeakButton} text=${readAloudText(item)} label="Läs upp frågan" /></div>`}<${QuestionBody} ...${props} />`;
 }
 
-function QuestionBody({ item, disabled, onAnswer, result, hideGiven }) {
+function QuestionBody({ item, disabled, onAnswer, result, hideGiven, onHelp }) {
+  if (item.kind === 'math') return html`<${MathQuestion} item=${item} disabled=${disabled} onAnswer=${onAnswer} result=${result} onHelp=${onHelp} />`;
   if (item.kind === 'mcq') return html`<${Mcq} item=${item} disabled=${disabled} onAnswer=${onAnswer} result=${result} />`;
   if (item.kind === 'match') return html`<${MatchQuestion} item=${item} disabled=${disabled} onAnswer=${onAnswer} result=${result} />`;
   if (item.kind === 'sort') return html`<${SortQuestion} item=${item} disabled=${disabled} onAnswer=${onAnswer} result=${result} />`;
@@ -1409,7 +1417,7 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
     ${result.helped && html`<p class="small muted">Du tittade i materialet först, så det här räknas som övning och flyttar inte nivån.</p>`}
     <div class="fb-tools">
       ${onExplain && html`<button class="tool" onClick=${onExplain}><${IconChat} /> Förklara mer</button>`}
-      <button class="tool" onClick=${onSource}><${IconBook} /> ${source ? `Läs i materialet (${source.replace(/, sida /, ', s. ')})` : 'Läs underlaget'}</button>
+      ${item.kind !== 'math' && html`<button class="tool" onClick=${onSource}><${IconBook} /> ${source ? `Läs i materialet (${source.replace(/, sida /, ', s. ')})` : 'Läs underlaget'}</button>`}
     </div>
     ${result.event === 'up' && html`<p class="levelup">Du går upp en nivå på det här målet.</p>`}
     ${result.event === 'fast' && html`<p class="levelup">Snabbspår! Tre rätt direkt, så du går upp en nivå.</p>`}
@@ -1422,7 +1430,7 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
         ? html`<span class="small muted"><span class="spinner inline" aria-hidden="true"></span> Kontrollerar en gång till…</span>`
         : result.disputed
           ? result.recheck !== 'up' && html`<span class="small muted">${result.recheck === 'same' ? 'Rättningen stod sig. ' : ''}Förälder får titta på det.</span>`
-          : html`<button class="btn ghost small" onClick=${onDispute}>Jag tycker jag hade rätt</button>`)}
+          : item.kind !== 'math' && html`<button class="btn ghost small" onClick=${onDispute}>Jag tycker jag hade rätt</button>`)}
       ${blocked && html`<button class="link small" onClick=${() => setSkipped(true)}>Hoppa över övningen</button>`}
       <button ref=${ref} class="btn primary" disabled=${!!result.rechecking || blocked} onClick=${onNext}>Nästa</button>
     </div>

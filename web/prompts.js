@@ -1,6 +1,7 @@
 // Promptar och svarsscheman som rena data. Samma filer används i artifacten och på servern.
 // Versionen sparas på allt som genereras, så att gamla frågor kan spåras till sin prompt.
 import { GOAL_TYPES, TYPE_MAX, hasSpellingLure } from './engine.js';
+import { SKILLS } from './math.js';
 
 export const PROMPT_VERSION = 'p2.4';
 
@@ -94,9 +95,10 @@ Uppgift: bryt ner det som ska kunnas till konkreta lärandemål.
 - Provbeskrivningen styr. Ta bara med det läraren säger ska kunnas. Saknas beskrivning, använd frågesidor och begreppslistor som vägledning.
 - Följ instruktioner i materialet om omfattning. "Det ska du inte kunna" läggs i outOfScope. "Du behöver kunna minst två" skrivs i målets note.
 - Varje mål formuleras som "Kunna ..." med ord som passar årskursen, och är specifikt nog för att kunna prövas.
-- type är en av: begrepp, fakta, samband, resonemang, glosa.
+- type är en av: begrepp, fakta, samband, resonemang, glosa, matematik.
   begrepp = veta vad ett ord betyder. fakta = minnas en uppgift. samband = förklara hur saker hänger ihop eller jämföra. resonemang = förklara varför eller dra slutsatser.
   glosa används bara för ordlistor med översättning, och då blir varje ord ett eget mål med fälten term, translation och langs (t.ex. "sv-en").
+  matematik används för räkning, och målet får fältet skill med exakt en av: ${Object.keys(SKILLS).join(', ')}. Uppgifterna skapas sedan av ett program, inte av dig, så skriv inga uppgifter eller svar. Passar inget av dem, använd begrepp eller fakta i stället.
 - weight 1–3: hur viktigt målet är för provet.
 - sources: de sidor där svaret finns, som {"m":"m1","p":2}. Minst en källa per mål.
 - enoughMaterial = false om svaret inte finns i materialet, till exempel när frågan hänvisar till elevens egna labbrapporter eller en redovisning. Skriv då i note vad som saknas.
@@ -104,7 +106,7 @@ Uppgift: bryt ner det som ska kunnas till konkreta lärandemål.
 - Jämförelseövningar (till exempel ett Venn-diagram) blir samband-mål om likheter och skillnader.
 
 Svara endast med JSON enligt:
-{"goals":[{"text":"Kunna ...","type":"begrepp","weight":2,"sources":[{"m":"m1","p":1}],"enoughMaterial":true,"note":"","term":"","translation":"","langs":""}],"outOfScope":["..."],"comment":"<en mening till föräldern om helheten>"}`;
+{"goals":[{"text":"Kunna ...","type":"begrepp","weight":2,"sources":[{"m":"m1","p":1}],"enoughMaterial":true,"note":"","term":"","translation":"","langs":"","skill":""}],"outOfScope":["..."],"comment":"<en mening till föräldern om helheten>"}`;
 }
 
 export function validateGoals(out, materials) {
@@ -121,6 +123,7 @@ export function validateGoals(out, materials) {
       .filter(s => pagesByRef.get(s.m)?.has(s.p));
     if (!sources.length) { errors.push(`${tag} ("${g.text.slice(0, 40)}") saknar giltig källa.`); continue; }
     if (type === 'glosa' && (!g.term || !g.translation)) { errors.push(`${tag} är en glosa men saknar term eller översättning.`); continue; }
+    if (type === 'matematik' && !Object.hasOwn(SKILLS, String(g.skill))) { errors.push(`${tag} är matematik men skill "${g.skill}" finns inte i listan.`); continue; }
     goals.push({
       text: g.text.trim(),
       type,
@@ -129,6 +132,7 @@ export function validateGoals(out, materials) {
       enoughMaterial: g.enoughMaterial !== false,
       note: typeof g.note === 'string' ? g.note.trim() : '',
       ...(type === 'glosa' ? { term: String(g.term), translation: String(g.translation), langs: String(g.langs || '') } : {}),
+      ...(type === 'matematik' ? { skill: String(g.skill) } : {}),
     });
   }
   if (!goals.length) errors.push('Inga giltiga mål.');
@@ -344,6 +348,7 @@ export const MOVES = {
 const MOVES_PER_LEVEL = { 3: 1, 4: 2, 5: 3 };
 
 export function highLevelsFor(goal) {
+  if (goal.type === 'matematik') return []; // alla nivåer kommer från math.js
   if (goal.type === 'glosa') return [4];
   const max = TYPE_MAX[goal.type] || 3;
   return [3, 4, 5].filter(l => l <= max);

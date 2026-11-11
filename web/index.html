@@ -656,6 +656,13 @@ body.sheet-open { overflow: hidden; }
 .chat-ask { font-weight: 700; }
 
 @media (prefers-reduced-motion: reduce) { .spinner, .stamp, .qcard.enter, .feedback, .fb-icon, .sheet-backdrop, .sheet-panel, .typing i, .kompis-bubble { animation: none; } .flip-inner { transition: none; } .m-item, .s-chip, .option, .tool { transition: none; } .bar span, .ring circle, .profile, .cover-front { transition: none; } .profile:hover, .cover:hover .cover-front { transform: none; } }
+/* Matematik */
+.math-steps { padding-left: 1.4em; display: grid; gap: 6px; margin: 10px 0; font-variant-numeric: tabular-nums; }
+.math-steps li.revealed { color: var(--good); }
+.math-steps .math-blank { color: var(--ink-2); font-style: italic; }
+.math-hints { margin: 8px 0; }
+.math-answer { display: flex; gap: 8px; align-items: center; }
+.math-answer .unit { font-weight: 700; }
 /* Skoluppgifter */
 .task-view textarea { width: 100%; }
 .task-fb .fb-strength { font-weight: 700; }

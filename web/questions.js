@@ -140,6 +140,30 @@ export function OrderQuestion({ item, disabled, onAnswer, result }) {
     ${!disabled && html`<div class="actions"><button class="btn primary" onClick=${() => onAnswer(order)}>Svara</button></div>`}`;
 }
 
+// Matematik (math.js): genomräknade steg som visas efter nivå, ledtrådsstege och ett svar.
+// En ledtråd räknas som hjälp (flyttar inte nivån), som att titta i materialet.
+export function MathQuestion({ item, disabled, onAnswer, result, onHelp }) {
+  const [v, setV] = useState('');
+  const [hints, setHints] = useState(0);
+  const ref = useRef();
+  useEffect(() => { setV(''); setHints(0); ref.current?.focus(); }, [item.id]);
+  const steps = result ? item.steps : item.steps.slice(0, item.shown);
+  return html`<form class="math" onSubmit=${e => { e.preventDefault(); if (v.trim() && !disabled) onAnswer(v); }}>
+    <h2 class="q">${item.q}</h2>
+    ${steps.length > 0 && html`<ol class="math-steps">${steps.map((s, i) => html`<li class=${result && i >= item.shown ? 'revealed' : ''}>${s}</li>`)}
+      ${!result && item.shown > 0 && html`<li class="math-blank">${item.shown === item.steps.length - 1 ? 'Svaret blir …' : 'Fortsätt själv …'}</li>`}</ol>`}
+    ${!result && item.hints?.length > 0 && html`<div class="math-hints">
+      ${item.hints.slice(0, hints).map(h => html`<p class="hint-line">💡 ${h}</p>`)}
+      ${hints < item.hints.length && html`<button type="button" class="btn ghost small" onClick=${() => { setHints(hints + 1); onHelp?.(); }}>${hints ? 'En ledtråd till' : 'Ledtråd'}</button>`}
+    </div>`}
+    <label class="sr" for="ans">Ditt svar</label>
+    <span class="math-answer"><input id="ans" ref=${ref} class="answer" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="text"
+      disabled=${disabled} value=${result ? result.given : v} onInput=${e => setV(e.target.value)} placeholder="Ditt svar" />${item.unit && html`<span class="unit">${item.unit}</span>`}</span>
+    <p class="small muted">Du kan skriva till exempel 7, 0,5, 1/2 eller 50 %.</p>
+    ${!disabled && html`<button class="btn primary" disabled=${!v.trim()}>Svara</button>`}
+  </form>`;
+}
+
 // Begreppskort: visas första gången ett mål dyker upp. Ingen rättning, bara bekanta sig.
 export function IntroCard({ goal, item, onDone }) {
   const [flipped, setFlipped] = useState(false);

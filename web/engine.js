@@ -1,14 +1,17 @@
 // Pedagogisk motor: nivåer, mastery, Leitner-repetition, urval och lokal rättning.
 // Ren logik utan DOM och utan lagring, så den kan testas direkt.
 
-export const GOAL_TYPES = ['begrepp', 'fakta', 'samband', 'resonemang', 'glosa'];
+import { checkMath } from './math.js';
+
+export const GOAL_TYPES = ['begrepp', 'fakta', 'samband', 'resonemang', 'glosa', 'matematik'];
 export const TYPE_LABEL = {
-  begrepp: 'Begrepp', fakta: 'Fakta', samband: 'Samband', resonemang: 'Resonemang', glosa: 'Glosa',
+  begrepp: 'Begrepp', fakta: 'Fakta', samband: 'Samband', resonemang: 'Resonemang', glosa: 'Glosa', matematik: 'Matematik',
 };
 
 // Högsta nivå per måltyp. Fakta och begrepp är klara efter nivå 3 (förstå), glosor efter
 // nivå 4 (använda ordet i en mening), samband och resonemang går hela vägen till nivå 5.
-export const TYPE_MAX = { begrepp: 3, fakta: 3, glosa: 4, samband: 5, resonemang: 5 };
+// Matematik: genomräknat exempel, första steget, egen uppgift, svårare tal (math.js).
+export const TYPE_MAX = { begrepp: 3, fakta: 3, glosa: 4, samband: 5, resonemang: 5, matematik: 4 };
 
 // Frågetyper som rättas av AI (fritext). Övriga rättas lokalt.
 export const FREE_KINDS = ['short', 'explain', 'sentence'];
@@ -337,6 +340,7 @@ export function gradeLocal(item, answer) {
       return { score: 0, verdict: 'wrong', note: `${right} av ${list.length} rätt sorterade.` };
     }
     case 'order': return gradeOrder(item.steps || [], answer);
+    case 'math': return checkMath(item, answer);
     default:
       return { score: 0, verdict: 'wrong' };
   }
@@ -374,6 +378,7 @@ export function correctAnswerText(item) {
     case 'match': return item.pairs.map(([l, r]) => `${l} – ${r}`).join('\n');
     case 'sort': return item.categories.map(c => `${c}: ${item.items.filter(i => i[1] === c).map(i => i[0]).join('; ')}`).join('\n');
     case 'order': return item.steps.map((s, i) => `${i + 1}. ${s}`).join('\n');
+    case 'math': return item.answerText;
     default: return '';
   }
 }

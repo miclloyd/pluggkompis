@@ -1,6 +1,7 @@
 // AI-flödet: tolka material → föreslå lärandemål → skapa frågebank.
 // Varje steg sparar löpande, så ett avbrott tappar inget färdigt arbete.
 // Inga automatiska omförsök: ett schemafel får en rättelse, sedan stoppar steget med ett tydligt fel.
+import { mathBank } from './math.js';
 import {
   interpretPrompt, validateInterpret, goalsPrompt, validateGoals,
   bankPrompt, validateBank, correctionPrompt, PROMPT_VERSION,
@@ -78,6 +79,13 @@ function sourceTextFor(goals, materials) {
 }
 
 export async function buildBank({ ai, repo, test, goals, materials, existing, onProgress }) {
+  // Matematik: uppgifterna och facit kommer från kodade generatorer, aldrig från AI.
+  for (const g of goals.filter(g => g.type === 'matematik' && !existing[g.id]?.length)) {
+    const items = mathBank(g);
+    if (items.length) await repo.saveBank(test.id, g.id, items);
+  }
+  goals = goals.filter(g => g.type !== 'matematik');
+  if (!goals.some(g => !existing[g.id]?.length)) return { short: [] };
   if (!ai) throw new StepError('Claude är inte tillgängligt, så frågor kan inte skapas här.');
   const todo = goals.filter(g => !existing[g.id]?.length);
   const batches = [];

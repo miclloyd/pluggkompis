@@ -21,7 +21,7 @@ const PHASE = {
 export const PHASE_LABEL = Object.fromEntries(Object.entries(PHASE).map(([k, v]) => [k, v.label]));
 
 // Sekunder per svar om barnet inte har egen historik än.
-const DEFAULT_SEC = { mcq: 15, match: 40, cloze: 25, write: 20, short: 60, explain: 120, sentence: 50 };
+const DEFAULT_SEC = { mcq: 15, match: 40, cloze: 25, write: 20, short: 60, explain: 120, sentence: 50, order: 40, dictation: 20, math: 45 };
 // Svar som behövs per nivå: med snabbspår ofta 3, annars 5. Långa fritextsvar och glosor
 // behöver färre, eftersom varje svar tar längre tid eller målet är litet.
 function answersFor(goal, level) {
