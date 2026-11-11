@@ -53,3 +53,19 @@ test('bankprompten förklarar trappan bara när det finns resonemangsmål', () =
   assert.match(bankHighPrompt({ test: t, goals: [{ ...goals[0], type: 'resonemang' }], sourceText: '' }), /trappa av resonemangsdrag/);
   assert.doesNotMatch(bankHighPrompt({ test: t, goals: [{ ...goals[0], type: 'samband' }], sourceText: '' }), /trappa av resonemangsdrag/);
 });
+
+test('dragen ger inga poäng utan rätt fakta', async () => {
+  const { scoreFor } = await import('../web/grading.js');
+  const item = { must: ['fakta1', 'fakta2', MOVES.orsak, MOVES.exempel], moves: ['orsak', 'exempel'] };
+  assert.equal(scoreFor(item, [true, true, true, true]), 1);
+  assert.equal(scoreFor(item, [false, false, true, true]), 0);   // bara drag
+  assert.equal(scoreFor(item, [true, false, true, true]), 0.5);  // en faktapunkt fel
+  assert.equal(scoreFor(item, [true, true, true, false]), 0.5);  // ett drag saknas
+  assert.equal(scoreFor(item, [true, true, false, false]), 0.5);
+  assert.equal(scoreFor({ must: ['a', 'b'] }, [true, false]), 0.5); // vanlig fråga som förut
+});
+
+test('okända drag, även prototypnamn, stoppas', () => {
+  const out = validateHigh({ items: [{ ...base, level: 4, must: ['fasta'], moves: ['orsak', 'toString'] }] }, goals, refs);
+  assert.equal(out.byGoal.r1.length, 0);
+});

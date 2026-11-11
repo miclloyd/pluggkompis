@@ -407,7 +407,7 @@ export function validateHigh(out, goals, validRefs) {
     let moves = null;
     if (goal.type === 'resonemang') {
       moves = [...new Set((Array.isArray(it.moves) ? it.moves : []).map(String))];
-      if (moves.length !== MOVES_PER_LEVEL[level] || !moves.every(m => MOVES[m]) || !moves.includes('orsak')) {
+      if (moves.length !== MOVES_PER_LEVEL[level] || !moves.every(m => Object.hasOwn(MOVES, m)) || !moves.includes('orsak')) {
         errors.push(`${tag}: "moves" ska ha ${MOVES_PER_LEVEL[level]} drag på nivå ${level}, bland dem "orsak".`); continue;
       }
       const [flo, fhi] = level === 3 ? [1, 1] : [1, 2];
@@ -458,7 +458,7 @@ Så här bedömer du:
 ${String(answer).slice(0, 2000)}
 SVAR>>>
 
-${item.moves?.length ? `Punkterna ${item.must.length - item.moves.length + 1}–${item.must.length} är resonemangsdrag: de är uppfyllda när barnet själv gör draget i svaret, även med andra ord. Faktapunkterna kräver att det barnet säger stämmer med underlaget.
+${item.moves?.length ? `Punkterna ${item.must.length - item.moves.length + 1}–${item.must.length} är resonemangsdrag: de är uppfyllda när barnet själv gör draget i svaret, även med andra ord, och det barnet säger i draget stämmer med underlaget. Ett drag som bygger på något felaktigt räknas inte. Faktapunkterna kräver att det barnet säger stämmer med underlaget.
 feedback: säg kort vad som var bra. Saknas ett drag, avsluta med EN följdfråga som hjälper barnet att göra det första draget som saknas ("Varför tror du att …?", "Kan du ge ett exempel?", "Vad blir följden av …?", "Hur kan någon annan se på det?"). Skriv aldrig ut svaret eller facit.` : 'feedback: högst två korta meningar till barnet på svenska. Säg först vad som var bra, sedan vad som saknades, utan att skriva ut hela svaret.'}
 confidence: "hög", eller "låg" om svaret är tvetydigt, svårt att förstå eller ligger på gränsen.
 

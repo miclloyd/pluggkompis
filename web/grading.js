@@ -24,6 +24,19 @@ const SUBSTANTIAL_WORDS = 6;
 
 export const wordCount = s => (String(s).trim().match(/\S+/g) || []).length;
 
+// Resonemang: dragen (sist i mallen) ger inga poäng om fakta inte stämmer (plan 1.6:
+// mallen "kräver att fakta stämmer med materialet"). Inga faktapunkter rätt = 0,
+// några = högst delpoäng.
+export function scoreFor(item, met) {
+  const k = item?.moves?.length ? item.must.length - item.moves.length : met.length;
+  const facts = met.slice(0, k);
+  if (k < met.length) {
+    if (!facts.some(Boolean)) return 0;
+    if (!facts.every(Boolean)) return Math.min(0.5, scoreFromMet(met));
+  }
+  return scoreFromMet(met);
+}
+
 export function scoreFromMet(met) {
   const n = met.filter(Boolean).length;
   if (n === met.length) return 1;
@@ -55,7 +68,7 @@ async function gradeOnce(ai, test, item, answer, tier) {
     v = validateGrade(out.json, item);
     if (!v.ok) throw Object.assign(new Error('Rättningen gav ett svar som inte gick att läsa.'), { code: 'invalid_json' });
   }
-  const score = scoreFromMet(v.met);
+  const score = scoreFor(item, v.met);
   return { score, verdict: verdictOf(score), met: v.met, feedback: v.feedback, confidence: v.confidence, tier };
 }
 
