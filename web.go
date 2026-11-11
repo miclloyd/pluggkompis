@@ -133,6 +133,7 @@ func (a *server) routes() http.Handler {
 		a.heavy = make(chan struct{}, 3)
 	}
 	mux.HandleFunc("POST /api/ai", a.limitHeavy(a.aiHandler))
+	mux.HandleFunc("GET /api/usage", a.usage)
 	mux.HandleFunc("POST /api/files", a.limitHeavy(a.filePut))
 	mux.HandleFunc("GET /api/files/{id}", a.limitHeavy(a.fileGet))
 	mux.HandleFunc("DELETE /api/files/{id}", a.fileDelete)

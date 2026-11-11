@@ -656,6 +656,11 @@ body.sheet-open { overflow: hidden; }
 .chat-ask { font-weight: 700; }
 
 @media (prefers-reduced-motion: reduce) { .spinner, .stamp, .qcard.enter, .feedback, .fb-icon, .sheet-backdrop, .sheet-panel, .typing i, .kompis-bubble { animation: none; } .flip-inner { transition: none; } .m-item, .s-chip, .option, .tool { transition: none; } .bar span, .ring circle, .profile, .cover-front { transition: none; } .profile:hover, .cover:hover .cover-front { transform: none; } }
+/* AI-användning i föräldraläget */
+table.usage { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+table.usage th, table.usage td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line, #dde3ee); }
+table.usage th { font-weight: 700; color: var(--ink-2); }
+table.usage td.warn { color: var(--bad, #b23a47); font-weight: 700; }
 </style>
 
 <div id="app"></div>

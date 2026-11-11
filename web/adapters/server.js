@@ -66,6 +66,8 @@ export async function createServerAdapters(config) {
     config,
     ai,
     save,
+    // AI-förbrukningen per barn och prov (bara upplåst föräldraläge).
+    usage: () => call('GET', '/api/usage'),
     // PIN och roll sköts av servern (auth.js beskriver gränssnittet).
     auth: {
       status: () => call('GET', '/api/auth'),

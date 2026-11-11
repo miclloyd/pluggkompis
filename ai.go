@@ -430,3 +430,65 @@ func readImages(files []*multipart.FileHeader) ([]image, *aiError) {
 	}
 	return out, nil
 }
+
+// ── /api/usage: förbrukningen för föräldraläget ──────────────────────────────
+
+type usageRow struct {
+	Kind      string `json:"kind"` // child | build
+	ProfileID string `json:"profileId,omitempty"`
+	TestID    string `json:"testId,omitempty"`
+	Date      string `json:"date,omitempty"` // svensk dag (bara child)
+	Calls     int    `json:"calls"`          // anrop till Anthropic
+	Failed    int    `json:"failed"`         // varav fel
+	Limited   int    `json:"limited"`        // stoppade av taket
+	In        int    `json:"inputTokens"`
+	Out       int    `json:"outputTokens"`
+}
+
+// usage: de senaste 30 dagarna, per barn och dag och per prov.
+func (s *server) usage(w http.ResponseWriter, r *http.Request) {
+	if !s.parentMode(r) {
+		accessError(w, errLocked)
+		return
+	}
+	if s.ai == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+		return
+	}
+	since := s.ai.now().Add(-30 * 24 * time.Hour).UnixMilli()
+	rows, err := s.ai.db.QueryContext(r.Context(), `SELECT bucket,
+  SUM(status <> 'limit'), SUM(status NOT IN ('ok', 'limit')), SUM(status = 'limit'),
+  SUM(input_tokens), SUM(output_tokens)
+FROM ai_log WHERE ts >= ? GROUP BY bucket ORDER BY bucket`, since)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	defer rows.Close()
+	out := []usageRow{}
+	for rows.Next() {
+		var b string
+		var u usageRow
+		if err := rows.Scan(&b, &u.Calls, &u.Failed, &u.Limited, &u.In, &u.Out); err != nil {
+			storeError(w, err)
+			return
+		}
+		parts := strings.Split(b, ":")
+		switch {
+		case parts[0] == "child" && len(parts) == 3:
+			u.Kind, u.ProfileID, u.Date = "child", parts[1], parts[2]
+		case parts[0] == "build" && len(parts) == 2:
+			u.Kind, u.TestID = "build", parts[1]
+		default:
+			continue
+		}
+		out = append(out, u)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": true,
+		"today":   s.ai.now().In(stockholm).Format("2006-01-02"),
+		"limits":  s.ai.limits,
+		"models":  s.ai.models,
+		"rows":    out,
+	})
+}

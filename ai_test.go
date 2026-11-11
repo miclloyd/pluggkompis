@@ -261,3 +261,36 @@ func TestAILimitConcurrent(t *testing.T) {
 		t.Fatalf("%d anrop till Anthropic, taket är 5", fake.calls)
 	}
 }
+
+func TestUsage(t *testing.T) {
+	_, h, _, pc := aiServer(t, Limits{ChildPerDay: 1})
+	aiCall(h, child, nil, map[string]any{"prompt": "x", "purpose": "child", "profileId": "p1"})
+	aiCall(h, child, nil, map[string]any{"prompt": "x", "purpose": "child", "profileId": "p1"}) // taket
+	aiCall(h, parent, pc, map[string]any{"prompt": "x", "purpose": "build", "testId": "t1"})
+	if w := do(h, parent, "GET", "/api/usage", ""); w.Code != 403 {
+		t.Fatalf("låst förälder: %d", w.Code)
+	}
+	if w := do(h, child, "GET", "/api/usage", ""); w.Code != 403 {
+		t.Fatalf("barn: %d", w.Code)
+	}
+	w := doC(h, parent, "GET", "/api/usage", "", pc)
+	var u struct {
+		Rows []usageRow
+	}
+	json.Unmarshal(w.Body.Bytes(), &u)
+	if len(u.Rows) != 2 {
+		t.Fatalf("%s", w.Body)
+	}
+	for _, r := range u.Rows {
+		switch r.Kind {
+		case "child":
+			if r.ProfileID != "p1" || r.Calls != 1 || r.Limited != 1 || r.In != 100 {
+				t.Errorf("barn: %+v", r)
+			}
+		case "build":
+			if r.TestID != "t1" || r.Calls != 1 {
+				t.Errorf("prov: %+v", r)
+			}
+		}
+	}
+}

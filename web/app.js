@@ -141,6 +141,11 @@ function Start({ env, go }) {
       ? html`<section class="hero"><h1>Pluggkompis är inte igång än</h1><p class="lead">Be en förälder starta Pluggkompis först.</p></section>`
       : html`<${Onboarding} env=${env} go=${go} />`;
   }
+  // En känd barnenhet går direkt till sin profil (plan 1.6, fas 3).
+  if (isChild && profiles.length === 1) {
+    setTimeout(() => go({ name: 'child', profileId: profiles[0].id }), 0);
+    return html`<p class="muted">Laddar…</p>`;
+  }
   if (isChild && !profiles.length) {
     return html`<section class="hero"><h1>Hej!</h1><p class="lead">Ditt konto är inte kopplat till någon profil än. Be en förälder koppla det under Föräldraläge → Barn.</p></section>`;
   }
@@ -281,7 +286,44 @@ function ParentHome({ env, go }) {
           <span class="muted small">Årskurs ${p.grade}${accounts && !p.account ? ' · inget konto' : ''}</span></button></li>`)}
       </ul>
       ${editing && html`<${ProfileForm} env=${env} profile=${editing} accounts=${accounts} profiles=${profiles} onDone=${() => { setEditing(null); load(); }} />`}
-    </section>`;
+    </section>
+    ${env.usage && html`<${AiUsage} env=${env} profiles=${profiles} tests=${tests} />`}`;
+}
+
+// AI-förbrukningen (servern): barnens anrop per dag mot dygnstaket, och provbyggena mot taket per prov.
+function AiUsage({ env, profiles, tests }) {
+  const [u, setU] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => { env.usage().then(setU).catch(e => setErr(errText(e))); }, []);
+  if (err) return html`<section class="block"><h2>AI-användning</h2><p class="notice bad">${err}</p></section>`;
+  if (!u) return null;
+  if (!u.enabled) return html`<section class="block"><h2>AI-användning</h2><p class="muted">AI är inte påslaget på servern.</p></section>`;
+  const days = [...Array(7)].map((_, i) => { const d = new Date(u.today + 'T12:00:00'); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); });
+  const child = u.rows.filter(r => r.kind === 'child');
+  const build = u.rows.filter(r => r.kind === 'build');
+  const sum = (rows, k) => rows.reduce((a, r) => a + r[k], 0);
+  const name = id => profiles.find(p => p.id === id)?.name || 'Borttagen profil';
+  const subject = id => tests.find(t => t.id === id)?.subject || 'Borttaget prov';
+  const tok = n => n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : n >= 1e3 ? `${Math.round(n / 1e3)} k` : String(n);
+  const ids = [...new Set(child.map(r => r.profileId))];
+  return html`<section class="block">
+    <h2>AI-användning</h2>
+    <p class="hint">Antal anrop till Claude. Barnet: högst ${u.limits.childPerDay} per dag. Ett prov: högst ${u.limits.perTest} när det byggs. Kostnaden syns i Anthropic Console.</p>
+    ${!u.rows.length && html`<p class="empty">Inga AI-anrop de senaste 30 dagarna.</p>`}
+    ${ids.length > 0 && html`<table class="usage">
+      <thead><tr><th>Barn</th>${days.map(d => html`<th>${d === u.today ? 'I dag' : d.slice(5)}</th>`)}<th>30 dagar</th></tr></thead>
+      <tbody>${ids.map(id => { const rs = child.filter(r => r.profileId === id); return html`<tr>
+        <td>${name(id)}</td>
+        ${days.map(d => { const r = rs.find(x => x.date === d); return html`<td class=${r?.limited ? 'warn' : ''}>${r ? r.calls : '–'}</td>`; })}
+        <td>${sum(rs, 'calls')} anrop · ${tok(sum(rs, 'inputTokens') + sum(rs, 'outputTokens'))} tokens</td></tr>`; })}</tbody>
+    </table>`}
+    ${build.length > 0 && html`<table class="usage">
+      <thead><tr><th>Prov</th><th>Anrop</th><th>Tokens</th></tr></thead>
+      <tbody>${build.map(r => html`<tr><td>${subject(r.testId)}</td><td>${r.calls} av ${u.limits.perTest}</td><td>${tok(r.inputTokens + r.outputTokens)}</td></tr>`)}</tbody>
+    </table>`}
+    ${sum(u.rows, 'limited') > 0 && html`<p class="small">Taket nåddes ${sum(u.rows, 'limited')} gånger (markerat).</p>`}
+    ${sum(u.rows, 'failed') > 0 && html`<p class="small">${sum(u.rows, 'failed')} anrop gav fel.</p>`}
+  </section>`;
 }
 
 function ProfileForm({ env, profile, accounts, profiles = [], onDone }) {
