@@ -12,6 +12,7 @@ package main
 // (ai_log) sparar bara antal tokens, aldrig prompt eller svar.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -274,6 +275,7 @@ type aiRequest struct {
 	Prompt    json.RawMessage `json:"prompt"`
 	Tier      string          `json:"tier"`
 	JSON      bool            `json:"json"`
+	Stream    bool            `json:"stream"`  // text i bitar (NDJSON), som artifactens onText
 	Purpose   string          `json:"purpose"` // child | build
 	TestID    string          `json:"testId"`
 	ProfileID string          `json:"profileId"`
@@ -380,6 +382,10 @@ func (s *server) aiHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	model := map[string]string{"quick": s.ai.models.Quick, "default": s.ai.models.Default, "complex": s.ai.models.Complex}[q.Tier]
+	if q.Stream && !q.JSON && len(images) == 0 {
+		s.ai.stream(w, r.Context(), bucket, q.Tier, model, msgs, maxTokens)
+		return
+	}
 	text, truncated, in, out, cerr := s.ai.complete(r.Context(), q.Tier, msgs, images, q.JSON, maxTokens)
 	if cerr != nil {
 		e := cerr.(*aiError)
@@ -491,4 +497,94 @@ FROM ai_log WHERE ts >= ? GROUP BY bucket ORDER BY bucket`, since)
 		"models":  s.ai.models,
 		"rows":    out,
 	})
+}
+
+// ── strömning (Förklara mer) ─────────────────────────────────────────────────
+
+// stream skickar svaret till klienten som NDJSON medan modellen skriver:
+// {"t":"bit"} … och sist {"done":true,"truncated":false} eller {"error":{…}}.
+// Felet efter att strömmen börjat kan inte bli en HTTP-status, därav error-raden.
+func (a *AI) stream(w http.ResponseWriter, ctx context.Context, bucket, tier, model string, msgs []message, maxTokens int) {
+	body, _ := json.Marshal(map[string]any{"model": model, "max_tokens": maxTokens, "messages": msgs, "stream": true})
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, a.url, bytes.NewReader(body))
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("x-api-key", a.key)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		a.logCall(bucket, tier, model, "upstream_error", 0, 0)
+		aiFail(w, 502, "upstream_error", "Claude svarade inte. Försök igen om en stund.")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("anthropic (ström): %d", resp.StatusCode)
+		a.logCall(bucket, tier, model, "upstream_error", 0, 0)
+		if resp.StatusCode == 429 || resp.StatusCode == 529 {
+			aiFail(w, 429, "rate_limited", "Claude har mycket att göra just nu. Vänta en stund och försök igen.")
+		} else {
+			aiFail(w, 502, "upstream_error", "Något gick fel hos Claude. Försök igen om en stund.")
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+	var in, out int
+	stop, status := "", "ok"
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		var ev struct {
+			Type  string `json:"type"`
+			Delta struct {
+				Type       string `json:"type"`
+				Text       string `json:"text"`
+				StopReason string `json:"stop_reason"`
+			} `json:"delta"`
+			Message struct {
+				Usage struct {
+					In int `json:"input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+			Usage struct {
+				Out int `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(line[5:])), &ev) != nil {
+			continue
+		}
+		switch ev.Type {
+		case "message_start":
+			in = ev.Message.Usage.In
+		case "content_block_delta":
+			if ev.Delta.Type == "text_delta" && ev.Delta.Text != "" {
+				enc.Encode(map[string]string{"t": ev.Delta.Text})
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+		case "message_delta":
+			stop, out = ev.Delta.StopReason, ev.Usage.Out
+		case "error":
+			status = "upstream_error"
+		}
+	}
+	if err := sc.Err(); err != nil || status != "ok" {
+		if ctx.Err() != nil {
+			status = "cancelled"
+		} else {
+			status = "upstream_error"
+		}
+		enc.Encode(map[string]any{"error": map[string]string{"code": status, "message": "Svaret avbröts. Försök igen."}})
+	} else {
+		enc.Encode(map[string]any{"done": true, "truncated": stop == "max_tokens"})
+	}
+	a.logCall(bucket, tier, model, status, in, out)
 }

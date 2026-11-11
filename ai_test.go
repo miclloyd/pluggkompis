@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -302,5 +303,47 @@ func TestUsageOnlyLimited(t *testing.T) {
 	w := doC(h, parent, "GET", "/api/usage", "", pc)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"calls":0`) || !strings.Contains(w.Body.String(), `"limited":1`) {
 		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
+
+// Strömning: Anthropics SSE blir NDJSON till klienten, och tokens loggas.
+func TestAIStream(t *testing.T) {
+	a, h, _, _ := aiServer(t, Limits{})
+	var got map[string]any
+	sse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, ev := range []string{
+			`{"type":"message_start","message":{"usage":{"input_tokens":42}}}`,
+			`{"type":"content_block_delta","delta":{"type":"text_delta","text":"Zakat "}}`,
+			`{"type":"content_block_delta","delta":{"type":"text_delta","text":"är allmosan."}}`,
+			`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}`,
+		} {
+			fmt.Fprintf(w, "event: x\ndata: %s\n\n", ev)
+		}
+	}))
+	defer sse.Close()
+	a.ai.url = sse.URL
+	w := aiCall(h, child, nil, map[string]any{"prompt": "Förklara", "tier": "quick", "stream": true, "purpose": "child", "profileId": "p1"})
+	if w.Code != 200 || w.Header().Get("Content-Type") != "application/x-ndjson" {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	want := `{"t":"Zakat "}` + "\n" + `{"t":"är allmosan."}` + "\n" + `{"done":true,"truncated":false}` + "\n"
+	if w.Body.String() != want {
+		t.Fatalf("ström:\n%s", w.Body)
+	}
+	if got["stream"] != true {
+		t.Fatalf("anropet till Anthropic: %v", got)
+	}
+	var in, out int
+	a.st.db.QueryRow(`SELECT input_tokens, output_tokens FROM ai_log ORDER BY ts DESC LIMIT 1`).Scan(&in, &out)
+	if in != 42 || out != 7 {
+		t.Fatalf("tokens %d/%d", in, out)
+	}
+	// JSON-anrop strömmas aldrig.
+	a.ai.url = sse.URL
+	w = aiCall(h, child, nil, map[string]any{"prompt": "x", "json": true, "stream": true, "purpose": "child", "profileId": "p1"})
+	if w.Header().Get("Content-Type") == "application/x-ndjson" {
+		t.Fatal("JSON-svar strömmades")
 	}
 }

@@ -569,6 +569,8 @@ body.sheet-open { overflow: hidden; }
   .kompis-dock { flex-direction: row; align-items: flex-end; left: calc(12px + env(safe-area-inset-left, 0px)); justify-content: flex-end; }
   .kompis-bubble { width: auto; flex: 1; max-width: 340px; margin: 0 0 18px; }
   .kompis-bubble::after { right: -8px; bottom: 22px; transform: rotate(-45deg); }
+  /* Kompisen står fast nere till höger: knapparna i övningen får inte hamna under den. */
+  .practice .qcard .btn.primary, .practice .feedback .actions { margin-right: 84px; }
 }
 .chat-kompis { display: flex; align-items: flex-end; gap: 10px; }
 .chat-kompis .kompis-host { width: 64px; flex: none; }

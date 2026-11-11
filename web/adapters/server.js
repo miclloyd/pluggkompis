@@ -23,9 +23,11 @@ export async function createServerAdapters(config) {
   let scope = {};
   const ai = config.features?.ai ? {
     setScope(s) { scope = s || {}; },
-    async complete({ prompt, images, tier = 'default', json = false, signal }) {
+    async complete({ prompt, images, tier = 'default', json = false, signal, onText }) {
+      // Med onText (Förklara mer) strömmas texten medan modellen skriver, som i artifacten.
+      const stream = !!onText && !json && !(images || []).length;
       const form = new FormData();
-      form.append('request', JSON.stringify({ prompt, tier, json, ...scope }));
+      form.append('request', JSON.stringify({ prompt, tier, json, stream, ...scope }));
       for (const img of images || []) form.append('images', img);
       let r;
       try {
@@ -36,6 +38,25 @@ export async function createServerAdapters(config) {
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
         throw Object.assign(new Error(d.message || 'AI-anropet misslyckades'), { code: d.code || 'upstream_error' });
+      }
+      if (stream && r.body) {
+        const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buf = '', text = '';
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += value;
+          let i;
+          while ((i = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, i); buf = buf.slice(i + 1);
+            if (!line.trim()) continue;
+            const ev = JSON.parse(line);
+            if (ev.t) { text += ev.t; onText({ text }); }
+            if (ev.error) throw Object.assign(new Error(ev.error.message), { code: ev.error.code, partial: text });
+            if (ev.done) return { text, truncated: !!ev.truncated };
+          }
+        }
+        return { text };
       }
       return r.json(); // { text, truncated } eller { json }
     },
