@@ -5,19 +5,14 @@ on:
 permissions:
   contents: read
 jobs:
-  publik-koll:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - run: ./dev/check-public.sh
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  bygge:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
+      # Publikt repo: inget personligt och inga nycklar, i hela historiken.
+      - run: ./dev/check-public.sh
+      - run: nix run nixpkgs#gitleaks -- git --redact --no-banner .
       - run: nix build -L .#default
