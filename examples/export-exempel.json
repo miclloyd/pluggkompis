@@ -1,0 +1,615 @@
+{
+  "format": "pluggkompis-backup",
+  "version": 1,
+  "exportedAt": "2026-11-11T18:52:41.022Z",
+  "test": {
+    "id": "tdemo01",
+    "profileId": "pdemo01",
+    "subject": "Religion",
+    "grade": 5,
+    "testDate": "2026-11-19",
+    "description": "Islam: fem pelare, moskén och högtider.",
+    "status": "ready",
+    "outOfScope": [],
+    "comment": "Påhittat exempel.",
+    "offDates": [
+      "2026-11-08"
+    ],
+    "createdAt": 1793455200000,
+    "updatedAt": 1793628000000,
+    "schemaVersion": 1
+  },
+  "profile": {
+    "name": "Testbarn",
+    "grade": 5
+  },
+  "goals": [
+    {
+      "id": "g1",
+      "type": "fakta",
+      "text": "Kunna de fem pelarna",
+      "weight": 3,
+      "order": 0,
+      "sources": [
+        {
+          "m": "m1",
+          "p": 1
+        }
+      ],
+      "enoughMaterial": true,
+      "approved": true,
+      "removed": false,
+      "parentNote": "",
+      "pv": "p2.2"
+    },
+    {
+      "id": "g2",
+      "type": "samband",
+      "text": "Kunna förklara varför man fastar",
+      "weight": 2,
+      "order": 1,
+      "sources": [
+        {
+          "m": "m1",
+          "p": 1
+        }
+      ],
+      "enoughMaterial": true,
+      "approved": true,
+      "removed": false,
+      "parentNote": "",
+      "pv": "p2.2"
+    },
+    {
+      "id": "g3",
+      "type": "glosa",
+      "text": "Kunna glosan nödvändig = necessary",
+      "term": "nödvändig",
+      "translation": "necessary",
+      "langs": "sv-en",
+      "weight": 1,
+      "order": 2,
+      "sources": [],
+      "enoughMaterial": true,
+      "approved": true,
+      "removed": false,
+      "parentNote": "",
+      "pv": "p2.2"
+    }
+  ],
+  "banks": {
+    "g1": [
+      {
+        "id": "i1",
+        "goalId": "g1",
+        "level": 1,
+        "kind": "mcq",
+        "q": "Hur många gånger om dagen ber man?",
+        "options": [
+          "Tre",
+          "Fem",
+          "Sju"
+        ],
+        "answer": 1,
+        "explain": "Man ber fem gånger om dagen.",
+        "quote": "man ber fem gånger om dagen.",
+        "src": {
+          "m": "m1",
+          "p": 1
+        },
+        "pv": "p2.2"
+      },
+      {
+        "id": "i2",
+        "goalId": "g1",
+        "level": 2,
+        "kind": "cloze",
+        "q": "Allmosan kallas ___.",
+        "answer": "zakat",
+        "accept": [],
+        "explain": "Allmosan kallas zakat.",
+        "src": {
+          "m": "m1",
+          "p": 1
+        },
+        "pv": "p2.2"
+      },
+      {
+        "id": "i3",
+        "goalId": "g1",
+        "level": 2,
+        "kind": "match",
+        "q": "Para ihop",
+        "pairs": [
+          [
+            "Bönen",
+            "Fem gånger om dagen"
+          ],
+          [
+            "Allmosan",
+            "Ge till behövande"
+          ],
+          [
+            "Imamen",
+            "Leder bönen"
+          ]
+        ],
+        "explain": "Tre delar ur materialet.",
+        "src": {
+          "m": "m1",
+          "p": 1
+        },
+        "pv": "p2.2"
+      },
+      {
+        "id": "i4",
+        "goalId": "g1",
+        "level": 3,
+        "kind": "short",
+        "q": "Vad är allmosan?",
+        "answer": "Att ge pengar eller gåvor till dem som behöver.",
+        "must": [
+          "ge pengar eller gåvor",
+          "till behövande"
+        ],
+        "explain": "",
+        "src": {
+          "m": "m1",
+          "p": 1
+        },
+        "pv": "p2.2"
+      }
+    ],
+    "g2": [
+      {
+        "id": "i5",
+        "goalId": "g2",
+        "level": 2,
+        "kind": "sort",
+        "q": "Sortera påståendena",
+        "categories": [
+          "Judendom",
+          "Islam",
+          "Båda"
+        ],
+        "items": [
+          [
+            "Man ber fem gånger om dagen",
+            "Islam"
+          ],
+          [
+            "Man tror på en enda Gud",
+            "Båda"
+          ],
+          [
+            "Sabbaten börjar fredag kväll",
+            "Judendom"
+          ]
+        ],
+        "explain": "Båda är monoteistiska.",
+        "src": {
+          "m": "m1",
+          "p": 1
+        },
+        "pv": "p2.2"
+      },
+      {
+        "id": "i6",
+        "goalId": "g2",
+        "level": 4,
+        "kind": "explain",
+        "q": "Förklara varför man fastar under ramadan.",
+        "answer": "För att förstå hur det är att inte ha mat och komma närmare Gud.",
+        "must": [
+          "förstå människor som inte har mat",
+          "komma närmare Gud"
+        ],
+        "explain": "",
+        "src": {
+          "m": "m1",
+          "p": 1
+        },
+        "pv": "p2.2"
+      }
+    ],
+    "g3": [
+      {
+        "id": "i7",
+        "goalId": "g3",
+        "level": 1,
+        "kind": "mcq",
+        "q": "Vad betyder necessary?",
+        "options": [
+          "nödvändig",
+          "nyfiken",
+          "noggrann"
+        ],
+        "answer": 0,
+        "explain": "",
+        "src": null,
+        "pv": "p2.2"
+      },
+      {
+        "id": "i8",
+        "goalId": "g3",
+        "level": 3,
+        "kind": "write",
+        "q": "Översätt till engelska: nödvändig",
+        "answer": "necessary",
+        "accept": [],
+        "explain": "Ett c och två s.",
+        "src": null,
+        "pv": "p2.2"
+      }
+    ]
+  },
+  "mastery": {
+    "g1": {
+      "goalId": "g1",
+      "level": 1,
+      "history": [
+        {
+          "l": 1,
+          "s": 1,
+          "t": 1793628000000
+        },
+        {
+          "l": 1,
+          "s": 1,
+          "t": 1793628060000
+        },
+        {
+          "l": 1,
+          "s": 0,
+          "t": 1793628120000
+        },
+        {
+          "l": 1,
+          "s": 0.5,
+          "t": 1793628420000
+        }
+      ],
+      "missStreak": 1,
+      "box": 0,
+      "due": 1793628660000,
+      "passedMax": false,
+      "seen": {
+        "i1": 1793628120000,
+        "i4": 1793628420000
+      },
+      "jumps": [],
+      "lastPracticed": 1793628420000,
+      "levelN": 4,
+      "id": "g1"
+    },
+    "g2": {
+      "goalId": "g2",
+      "level": 1,
+      "history": [],
+      "missStreak": 0,
+      "box": 0,
+      "due": 0,
+      "passedMax": false,
+      "seen": {},
+      "id": "g2"
+    },
+    "g3": {
+      "goalId": "g3",
+      "level": 2,
+      "history": [
+        {
+          "l": 1,
+          "s": 1,
+          "t": 1793628240000
+        },
+        {
+          "l": 2,
+          "s": 0.5,
+          "t": 1793628300000
+        }
+      ],
+      "missStreak": 0,
+      "box": 0,
+      "due": 1793628540000,
+      "passedMax": false,
+      "seen": {
+        "i7": 1793628240000,
+        "i8": 1793628300000
+      },
+      "jumps": [
+        {
+          "from": 1,
+          "to": 2,
+          "at": 1793628270000,
+          "held": null
+        }
+      ],
+      "lastPracticed": 1793628300000,
+      "levelN": 1,
+      "jumpBlock": null,
+      "jump": {
+        "from": 1,
+        "to": 2,
+        "n": 1,
+        "misses": 0,
+        "at": 1793628270000
+      },
+      "id": "g3"
+    }
+  },
+  "materials": [
+    {
+      "id": "mdemo01",
+      "ref": "m1",
+      "name": "Exempelmaterial islam",
+      "order": 0,
+      "status": "interpreted",
+      "kind": "pdf",
+      "role": "material",
+      "fileAssetId": "asset-demo-01",
+      "pages": [
+        {
+          "p": 1,
+          "kind": "fakta",
+          "text": "## Fem pelare\n\n**Bönen:** man ber fem gånger om dagen.\n\n**Allmosan:** man ger till behövande. Kallas zakat.\n\nMoské, Imam:\nMoskén är byggnaden där man ber.\nImamen leder bönen."
+        }
+      ],
+      "createdAt": 1793455200000,
+      "updatedAt": 1793455200000,
+      "schemaVersion": 1
+    }
+  ],
+  "attempts": [
+    {
+      "id": "a001",
+      "profileId": "pdemo01",
+      "goalId": "g1",
+      "itemId": "i1",
+      "level": 1,
+      "kind": "mcq",
+      "answer": 1,
+      "score": 1,
+      "verdict": "right",
+      "ts": 1793628000000,
+      "disputed": false
+    },
+    {
+      "id": "a002",
+      "profileId": "pdemo01",
+      "goalId": "g1",
+      "itemId": "i1",
+      "level": 1,
+      "kind": "mcq",
+      "answer": 1,
+      "score": 1,
+      "verdict": "right",
+      "ts": 1793628060000,
+      "disputed": false
+    },
+    {
+      "id": "a003",
+      "profileId": "pdemo01",
+      "goalId": "g1",
+      "itemId": "i1",
+      "level": 1,
+      "kind": "mcq",
+      "answer": 0,
+      "score": 0,
+      "verdict": "wrong",
+      "ts": 1793628120000,
+      "disputed": false
+    },
+    {
+      "id": "a004",
+      "profileId": "pdemo01",
+      "goalId": "g1",
+      "itemId": "i1",
+      "level": 1,
+      "kind": "mcq",
+      "answer": 1,
+      "score": 1,
+      "verdict": "right",
+      "ts": 1793628180000,
+      "disputed": false,
+      "helped": true
+    },
+    {
+      "id": "a005",
+      "profileId": "pdemo01",
+      "goalId": "g3",
+      "itemId": "i7",
+      "level": 1,
+      "kind": "mcq",
+      "answer": 0,
+      "score": 1,
+      "verdict": "right",
+      "ts": 1793628240000,
+      "disputed": false
+    },
+    {
+      "id": "a006",
+      "profileId": "pdemo01",
+      "goalId": "g3",
+      "itemId": "i8",
+      "level": 3,
+      "kind": "write",
+      "answer": "neccesary",
+      "score": 0.5,
+      "verdict": "almost",
+      "ts": 1793628300000,
+      "disputed": false,
+      "coverWrite": {
+        "ok": true,
+        "rounds": 2
+      }
+    },
+    {
+      "id": "a007",
+      "profileId": "pdemo01",
+      "goalId": "g1",
+      "itemId": "i4",
+      "level": 3,
+      "kind": "short",
+      "answer": "Man ger pengar.",
+      "score": 0.5,
+      "verdict": "almost",
+      "ts": 1793628420000,
+      "disputed": true,
+      "grading": {
+        "tier": "quick",
+        "escalated": false,
+        "reason": null,
+        "met": [
+          true,
+          false
+        ],
+        "feedback": "Bra! Vem ger man till?",
+        "confidence": "hög",
+        "calls": 1
+      }
+    },
+    {
+      "id": "a008",
+      "profileId": "pdemo01",
+      "goalId": "g2",
+      "itemId": "i5",
+      "level": 2,
+      "kind": "sort",
+      "answer": {
+        "Man ber fem gånger om dagen": "Islam",
+        "Man tror på en enda Gud": "Båda",
+        "Sabbaten börjar fredag kväll": "Judendom"
+      },
+      "score": 1,
+      "verdict": "right",
+      "ts": 1793714400000,
+      "disputed": false,
+      "exam": "xdemo01"
+    },
+    {
+      "id": "a009",
+      "profileId": "pdemo01",
+      "goalId": "g1",
+      "itemId": "i2",
+      "level": 2,
+      "kind": "cloze",
+      "answer": "zakat",
+      "score": 1,
+      "verdict": "right",
+      "ts": 1793714460000,
+      "disputed": false,
+      "exam": "xdemo01"
+    }
+  ],
+  "events": [
+    {
+      "id": "edemo01",
+      "type": "jump",
+      "goalId": "g3",
+      "ts": 1793628270000,
+      "from": 1,
+      "to": 2,
+      "profileId": "pdemo01"
+    }
+  ],
+  "chats": [
+    {
+      "id": "cdemo01",
+      "profileId": "pdemo01",
+      "goalId": "g1",
+      "itemId": "i2",
+      "q": "Allmosan kallas ___.",
+      "ts": 1793628360000,
+      "messages": [
+        {
+          "role": "assistant",
+          "text": "Zakat betyder att man delar med sig till dem som behöver.",
+          "tier": "quick"
+        },
+        {
+          "role": "user",
+          "text": "Ge ett exempel",
+          "tier": null
+        },
+        {
+          "role": "assistant",
+          "text": "Som när klassen samlar in pengar till någon som behöver.",
+          "tier": "quick"
+        }
+      ]
+    },
+    {
+      "id": "tdemochat",
+      "kind": "teach",
+      "profileId": "pdemo01",
+      "goalId": "g1",
+      "q": "Kunna de fem pelarna",
+      "ts": 1793715000000,
+      "stars": 2,
+      "covered": [
+        "Man ber fem gånger om dagen"
+      ],
+      "missing": [
+        "Allmosan"
+      ],
+      "wrong": null,
+      "messages": [
+        {
+          "role": "assistant",
+          "text": "Jag fattar inte riktigt det här: ”De fem pelarna”. Kan du förklara det för mig med egna ord?"
+        },
+        {
+          "role": "user",
+          "text": "Det är fem saker man gör, som att be fem gånger om dagen."
+        },
+        {
+          "role": "assistant",
+          "text": "Okej, man ber fem gånger om dagen! Finns det någon pelare som handlar om pengar?"
+        }
+      ]
+    }
+  ],
+  "exams": [
+    {
+      "id": "xdemo01",
+      "profileId": "pdemo01",
+      "ts": 1793714400000,
+      "endTs": 1793714520000,
+      "points": 2,
+      "max": 3,
+      "items": [
+        {
+          "goalId": "g2",
+          "itemId": "i5",
+          "level": 2,
+          "kind": "sort",
+          "answer": {
+            "Man ber fem gånger om dagen": "Islam",
+            "Man tror på en enda Gud": "Båda",
+            "Sabbaten börjar fredag kväll": "Judendom"
+          },
+          "score": 1,
+          "verdict": "right"
+        },
+        {
+          "goalId": "g1",
+          "itemId": "i2",
+          "level": 2,
+          "kind": "cloze",
+          "answer": "zakat",
+          "score": 1,
+          "verdict": "right"
+        },
+        {
+          "goalId": "g2",
+          "itemId": "i6",
+          "level": 4,
+          "kind": "explain",
+          "answer": null,
+          "score": 0,
+          "verdict": "skipped"
+        }
+      ]
+    }
+  ]
+}

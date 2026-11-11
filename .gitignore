@@ -1,0 +1,6 @@
+dev/harness/site/
+node_modules/
+result
+result-*
+*.db
+*.db-*

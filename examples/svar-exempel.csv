@@ -1,0 +1,10 @@
+﻿Datum;Tid;Mål;Nivå;Frågetyp;Poäng;Bedömning;Läge;Svar
+2026-11-02;14:00;Kunna de fem pelarna;1;mcq;1;Rätt;Övning;1
+2026-11-02;14:01;Kunna de fem pelarna;1;mcq;1;Rätt;Övning;1
+2026-11-02;14:02;Kunna de fem pelarna;1;mcq;0;Fel;Övning;0
+2026-11-02;14:03;Kunna de fem pelarna;1;mcq;1;Rätt;Med materialet;1
+2026-11-02;14:04;Kunna glosan nödvändig = necessary;1;mcq;1;Rätt;Övning;0
+2026-11-02;14:05;Kunna glosan nödvändig = necessary;3;write;0,5;Delvis;Övning;neccesary
+2026-11-02;14:07;Kunna de fem pelarna;3;short;0,5;Delvis;Övning;Man ger pengar.
+2026-11-03;14:00;Kunna förklara varför man fastar;2;sort;1;Rätt;Provläge;Man ber fem gånger om dagen – Islam | Man tror på en enda Gud – Båda | Sabbaten börjar fredag kväll – Judendom
+2026-11-03;14:01;Kunna de fem pelarna;2;cloze;1;Rätt;Provläge;zakat
