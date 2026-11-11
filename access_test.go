@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Två barn med var sin profil och var sitt prov, plus en okopplad profil.
@@ -292,5 +293,44 @@ func TestChildProfileValidation(t *testing.T) {
 	}
 	if w := do(h, child, "PATCH", "/api/store/profiles/p1", `{"theme":"dark","kompis":{"color":"#2f4fb8","accessory":"mossa","name":"Bläcky"}}`); w.Code != 204 {
 		t.Errorf("giltigt: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestChildGrade(t *testing.T) {
+	at := func(s string) time.Time { tm, _ := time.Parse("2006-01-02", s); return tm }
+	for _, c := range []struct {
+		by, off int
+		now     string
+		want    int
+	}{
+		{2015, 0, "2026-11-11", 5}, // planens exempel: född 2015 = åk 5 hösten 2026
+		{2015, 0, "2027-06-30", 5},
+		{2015, 0, "2027-07-01", 6}, // läsåret byts 1 juli
+		{2015, -1, "2026-11-11", 4},
+		{2025, 0, "2026-11-11", 0},
+	} {
+		if g := childGrade(c.by, c.off, at(c.now)); g != c.want {
+			t.Errorf("%d%+d %s: %d, väntade %d", c.by, c.off, c.now, g, c.want)
+		}
+	}
+}
+
+func TestChildNeverSeesBirthYear(t *testing.T) {
+	_, h := testServer(t)
+	pc := seedFamily(t, h)
+	doC(h, parent, "PATCH", "/api/store/profiles/p1", `{"birthYear":2015,"birthMonth":4,"gradeOffset":0}`, pc)
+	for _, url := range []string{"/api/store/profiles/p1", "/api/store/profiles?list=1"} {
+		b := do(h, child, "GET", url, "").Body.String()
+		if strings.Contains(b, "birth") || strings.Contains(b, "gradeOffset") || !strings.Contains(b, `"grade":`) {
+			t.Errorf("%s: %s", url, b)
+		}
+	}
+	if b := do(h, parent, "GET", "/api/store/profiles/p1", "").Body.String(); !strings.Contains(b, `"birthYear":2015`) {
+		t.Errorf("föräldern: %s", b)
+	}
+	// Barnets temabyte (hela profilen skickas) får inte radera födelseåret.
+	do(h, child, "PUT", "/api/store/profiles/p1", `{"name":"Ett","grade":5,"theme":"dark"}`)
+	if b := do(h, parent, "GET", "/api/store/profiles/p1", "").Body.String(); !strings.Contains(b, `"birthYear":2015`) || !strings.Contains(b, `"theme":"dark"`) {
+		t.Errorf("efter barnets temabyte: %s", b)
 	}
 }

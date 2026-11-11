@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -250,4 +251,51 @@ func accessError(w http.ResponseWriter, err error) {
 		return
 	}
 	storeError(w, err)
+}
+
+// ── barnets vy av profilen ───────────────────────────────────────────────────
+
+// childGrade: samma regel som web/grade.js. Läsåret som börjar på hösten år Å:
+// årskurs = Å − födelseår − 6 + gradeOffset, läsåret byts 1 juli.
+func childGrade(birthYear, offset int, now time.Time) int {
+	now = now.In(stockholm)
+	start := now.Year()
+	if now.Month() < time.July {
+		start--
+	}
+	return max(0, min(9, start-birthYear-6+offset))
+}
+
+// childProfileView: barnet ser aldrig födelseår eller -månad (plan 1.6), bara
+// årskursen som räknas fram ur dem.
+func childProfileView(raw json.RawMessage, now time.Time) json.RawMessage {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return raw
+	}
+	var by, off int
+	if json.Unmarshal(m["birthYear"], &by) == nil && by > 0 {
+		json.Unmarshal(m["gradeOffset"], &off)
+		g, _ := json.Marshal(childGrade(by, off, now))
+		m["grade"] = g
+	}
+	delete(m, "birthYear")
+	delete(m, "birthMonth")
+	delete(m, "gradeOffset")
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+// forChild: profiler som barnet läser går genom childProfileView.
+func (s *server) forChild(r *http.Request, p string, docs ...json.RawMessage) {
+	sg := segs(p)
+	if currentUser(r).Role != "child" || sg[0] != "profiles" {
+		return
+	}
+	for i := range docs {
+		docs[i] = childProfileView(docs[i], s.st.now())
+	}
 }

@@ -262,6 +262,9 @@ func (a *server) storeGet(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			docs, err = a.filterList(r, p, docs)
 		}
+		if err == nil {
+			a.forChild(r, p, docs...)
+		}
 		if err != nil {
 			storeError(w, err)
 			return
@@ -279,7 +282,9 @@ func (a *server) storeGet(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, d)
+	docs := []json.RawMessage{d}
+	a.forChild(r, p, docs...)
+	writeJSON(w, http.StatusOK, docs[0])
 }
 
 func (a *server) storeSet(w http.ResponseWriter, r *http.Request) {

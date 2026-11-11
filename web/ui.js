@@ -26,8 +26,8 @@ export function Ring({ value, size = 96, stroke = 10, label, sub }) {
   return html`<div class="ring" style=${`width:${size}px;height:${size}px`}>
     <svg viewBox=${`0 0 ${size} ${size}`} width=${size} height=${size} aria-hidden="true">
       <circle cx=${size / 2} cy=${size / 2} r=${r} fill="none" stroke="var(--rule)" stroke-width=${stroke} />
-      <circle cx=${size / 2} cy=${size / 2} r=${r} fill="none" stroke=${v >= 1 ? 'var(--good)' : 'var(--pen)'} stroke-width=${stroke}
-        stroke-linecap="round" stroke-dasharray=${`${c * v} ${c}`} transform=${`rotate(-90 ${size / 2} ${size / 2})`} />
+      ${v > 0 && html`<circle cx=${size / 2} cy=${size / 2} r=${r} fill="none" stroke=${v >= 1 ? 'var(--good)' : 'var(--pen)'} stroke-width=${stroke}
+        stroke-linecap="round" stroke-dasharray=${`${c * v} ${c}`} transform=${`rotate(-90 ${size / 2} ${size / 2})`} />`}
     </svg>
     <span class="ring-label">${label}${sub && html`<small>${sub}</small>`}</span>
   </div>`;

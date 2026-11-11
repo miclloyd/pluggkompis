@@ -1,6 +1,7 @@
 // Utskrift och export. Instuderingshäftet byggs som PDF (jsPDF, laddas vid behov) eftersom
 // sidan inte kan öppna skrivardialogen själv. Export ger en säkerhetskopia (JSON) och svaren
 // som tabell (CSV) för den som vill räkna själv.
+import { gradeOf } from './grade.js';
 import { html, useState } from './lib.js';
 import { loadScript } from './lib.js';
 import { Sheet } from './sheet.js';
@@ -156,13 +157,22 @@ export async function buildBookletPdf({ libs, test, goals, banks, mastery, profi
 const csvCell = v => { const s = String(v ?? ''); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 
 // Svar som tabell. Semikolon och decimalkomma, så att svenskt Excel öppnar den direkt.
-export function attemptsCsv({ attempts, goals }) {
+export function attemptsCsv({ attempts, goals, banks = {} }) {
   const goal = id => goals.find(g => g.id === id)?.text || '';
+  const item = a => (banks[a.goalId] || []).find(i => i.id === a.itemId);
+  // Flerval sparas som index; tabellen visar alternativets text.
+  const shown = a => {
+    const it = item(a);
+    if (a.kind === 'mcq' && Number.isInteger(a.answer) && it?.options?.[a.answer] != null) return it.options[a.answer];
+    if (typeof a.answer === 'object' && a.answer) return Object.entries(a.answer).map(([x, y]) => `${x} – ${y}`).join(' | ');
+    return a.answer;
+  };
+  const tz = { timeZone: 'Europe/Stockholm' };
   const head = ['Datum', 'Tid', 'Mål', 'Nivå', 'Frågetyp', 'Poäng', 'Bedömning', 'Läge', 'Svar'];
   const rows = attempts.slice().sort((a, b) => a.ts - b.ts).map(a => {
     const d = new Date(a.ts);
-    const answer = typeof a.answer === 'object' && a.answer ? Object.entries(a.answer).map(([x, y]) => `${x} – ${y}`).join(' | ') : a.answer;
-    return [d.toLocaleDateString('sv-SE'), d.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }), goal(a.goalId), a.level, a.kind,
+    const answer = shown(a);
+    return [d.toLocaleDateString('sv-SE', tz), d.toLocaleTimeString('sv-SE', { ...tz, hour: '2-digit', minute: '2-digit' }), goal(a.goalId), a.level, a.kind,
       String(a.score).replace('.', ','), { right: 'Rätt', almost: 'Delvis', wrong: 'Fel' }[a.verdict] || a.verdict,
       a.exam ? 'Provläge' : a.helped ? 'Med materialet' : 'Övning', answer];
   });
@@ -215,9 +225,9 @@ export function PrintSheet({ env, test, goals, banks, mastery, materials, attemp
       <h3>Exportera</h3>
       <div class="actions left">
         <button class="btn ghost" disabled=${!canSave || !!busy || !attempts.length}
-          onClick=${() => save('Skapar tabellen…', `${base}-svar.csv`, async () => attemptsCsv({ attempts, goals }))}>Alla svar som tabell (CSV)</button>
+          onClick=${() => save('Skapar tabellen…', `${base}-svar.csv`, async () => attemptsCsv({ attempts, goals, banks }))}>Alla svar som tabell (CSV)</button>
         <button class="btn ghost" disabled=${!canSave || !!busy}
-          onClick=${() => save('Skapar kopian…', `${base}-sakerhetskopia.json`, async () => backupJson({ test, profile: profile ? { name: profile.name, grade: profile.grade } : null, goals, banks, mastery, materials, attempts, events, chats, exams }))}>Säkerhetskopia (JSON)</button>
+          onClick=${() => save('Skapar kopian…', `${base}-sakerhetskopia.json`, async () => backupJson({ test, profile: profile ? { name: profile.name, grade: gradeOf(profile) } : null, goals, banks, mastery, materials, attempts, events, chats, exams }))}>Säkerhetskopia (JSON)</button>
       </div>
       <p class="small muted">Tabellen öppnas direkt i Excel. Säkerhetskopian innehåller allt om provet utom bilder, och kan läsas in på den egna servern senare.</p>
     </section>

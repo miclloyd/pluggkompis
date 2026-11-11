@@ -2,6 +2,7 @@ import { html, render, useState, useEffect, useRef, useMemo, useCallback } from 
 import { loadEnvironment } from './env.js';
 import { createRepo, uid } from './repo.js';
 import { createLocalAuth } from './auth.js';
+import { gradeOf, birthYearFor } from './grade.js';
 import { readFile, fileKind } from './extract.js';
 import { summarize, relDay, pct } from './stats.js';
 import { coverVar, Ring, Stamp, AnswerTrail, IconBook, IconChat, IconMic } from './ui.js';
@@ -160,7 +161,7 @@ function Start({ env, go }) {
         <button class="profile" style=${`--c:${p.color}`} onClick=${() => { lsSet('pk.profile', p.id); go({ name: 'child', profileId: p.id }); }}>
           <span class="avatar">${p.name.slice(0, 1).toUpperCase()}</span>
           <span class="profile-name">${p.name}</span>
-          <span class="profile-grade">Årskurs ${p.grade}</span>
+          <span class="profile-grade">Årskurs ${gradeOf(p)}</span>
         </button>`)}
     </div>
     ${!isChild && html`<p class="center parent-link"><button class="btn ghost small" onClick=${() => go({ name: 'parent' })}>Förälder</button></p>`}`;
@@ -169,7 +170,8 @@ function Start({ env, go }) {
 function Onboarding({ env, go }) {
   const [pin, setPin] = useState('');
   const [name, setName] = useState('');
-  const [grade, setGrade] = useState('5');
+  const [birthYear, setBirthYear] = useState(String(birthYearFor(5)));
+  const [birthMonth, setBirthMonth] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -180,7 +182,7 @@ function Onboarding({ env, go }) {
     setBusy(true);
     try {
       await env.auth.setPin(pin);
-      await env.repo.saveProfile({ id: uid('p'), name: name.trim(), grade: Number(grade), color: COLORS[0] });
+      await env.repo.saveProfile({ id: uid('p'), name: name.trim(), birthYear: Number(birthYear), birthMonth: birthMonth ? Number(birthMonth) : null, gradeOffset: 0, color: COLORS[0] });
       go({ name: 'start', t: Date.now() });
     } catch (x) { setErr(errText(x)); setBusy(false); }
   }
@@ -195,13 +197,8 @@ function Onboarding({ env, go }) {
       <label for="ob-pin">Föräldra-PIN</label>
       <input id="ob-pin" inputmode="numeric" autocomplete="new-password" maxlength="6" value=${pin} onInput=${e => setPin(e.target.value.replace(/\D/g, ''))} />
       <p class="hint">Skyddar uppladdning och inställningar. 4–6 siffror.</p>
-      <div class="row2">
-        <div><label for="ob-name">Barnets namn</label><input id="ob-name" value=${name} onInput=${e => setName(e.target.value)} /></div>
-        <div><label for="ob-grade">Årskurs</label>
-          <select id="ob-grade" value=${grade} onChange=${e => setGrade(e.target.value)}>
-            ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(g => html`<option value=${g}>${g}</option>`)}
-          </select></div>
-      </div>
+      <label for="ob-name">Barnets namn</label><input id="ob-name" value=${name} onInput=${e => setName(e.target.value)} />
+      <${BirthFields} year=${birthYear} month=${birthMonth} offset=${0} onYear=${setBirthYear} onMonth=${setBirthMonth} prefix="ob" />
       ${err && html`<p class="notice bad">${err}</p>`}
       <button class="btn primary" disabled=${busy}>Spara och fortsätt</button>
     </form>`;
@@ -279,11 +276,11 @@ function ParentHome({ env, go }) {
     </section>
 
     <section class="block">
-      <div class="block-head"><h2>Barn</h2><button class="btn ghost" onClick=${() => setEditing({ id: uid('p'), name: '', grade: 5, color: COLORS[profiles.length % COLORS.length], isNew: true })}>Lägg till barn</button></div>
+      <div class="block-head"><h2>Barn</h2><button class="btn ghost" onClick=${() => setEditing({ id: uid('p'), name: '', birthYear: birthYearFor(5), gradeOffset: 0, color: COLORS[profiles.length % COLORS.length], isNew: true })}>Lägg till barn</button></div>
       <ul class="list">
         ${profiles.map(p => html`<li><button class="list-row" onClick=${() => setEditing(p)}>
           <span class="lr-main"><span class="avatar sm" style=${`--c:${p.color}`}>${p.name.slice(0, 1)}</span><strong>${p.name}</strong></span>
-          <span class="muted small">Årskurs ${p.grade}${accounts && !p.account ? ' · inget konto' : ''}</span></button></li>`)}
+          <span class="muted small">Årskurs ${gradeOf(p)}${!p.birthYear ? ' · bekräfta födelseår' : ''}${accounts && !p.account ? ' · inget konto' : ''}</span></button></li>`)}
       </ul>
       ${editing && html`<${ProfileForm} env=${env} profile=${editing} accounts=${accounts} profiles=${profiles} onDone=${() => { setEditing(null); load(); }} />`}
     </section>
@@ -326,8 +323,30 @@ function AiUsage({ env, profiles, tests }) {
   </section>`;
 }
 
+// Födelseår och -månad (månaden är valfri) i stället för årskurs. Visas bara för föräldern.
+const MONTHS = ['januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli', 'augusti', 'september', 'oktober', 'november', 'december'];
+function BirthFields({ year, month, offset, onYear, onMonth, onOffset, prefix }) {
+  const now = new Date().getFullYear();
+  const years = [...Array(15)].map((_, i) => now - 4 - i);
+  const grade = gradeOf({ birthYear: Number(year), gradeOffset: Number(offset) || 0 });
+  return html`<div class="row2">
+      <div><label for=${prefix + '-by'}>Födelseår</label><select id=${prefix + '-by'} value=${String(year)} onChange=${e => onYear(e.target.value)}>
+        ${years.map(y => html`<option value=${y}>${y}</option>`)}</select></div>
+      <div><label for=${prefix + '-bm'}>Födelsemånad</label><select id=${prefix + '-bm'} value=${month ? String(month) : ''} onChange=${e => onMonth(e.target.value)}>
+        <option value="">Vill inte ange</option>${MONTHS.map((m, i) => html`<option value=${i + 1}>${m}</option>`)}</select></div>
+    </div>
+    ${onOffset && html`<div><label for=${prefix + '-go'}>Årskurs</label><select id=${prefix + '-go'} value=${String(offset || 0)} onChange=${e => onOffset(Number(e.target.value))}>
+      <option value="-1">Ett år efter (gått om)</option><option value="0">Som födelseåret</option><option value="1">Ett år före (börjat tidigare)</option></select></div>`}
+    <p class="hint">Går i årskurs ${grade} i år. Årskursen räknas fram och byts 1 juli. Födelseåret visas aldrig för barnet.</p>`;
+}
+
 function ProfileForm({ env, profile, accounts, profiles = [], onDone }) {
-  const [p, setP] = useState({ ...profile, schedule: { ...DEFAULT_SCHEDULE, ...(profile.schedule || {}) } });
+  const [p, setP] = useState({
+    ...profile,
+    birthYear: profile.birthYear || birthYearFor(profile.grade || 5),
+    gradeOffset: profile.gradeOffset || 0,
+    schedule: { ...DEFAULT_SCHEDULE, ...(profile.schedule || {}) },
+  });
   const sch = p.schedule;
   const setSch = patch => setP({ ...p, schedule: { ...sch, ...patch } });
   const toggleDay = i => setSch({ trainingDays: sch.trainingDays.includes(i) ? sch.trainingDays.filter(x => x !== i) : [...sch.trainingDays, i] });
@@ -335,17 +354,15 @@ function ProfileForm({ env, profile, accounts, profiles = [], onDone }) {
   async function save(e) {
     e.preventDefault();
     if (!p.name.trim()) return;
-    const { isNew, ...rest } = p;
+    const { isNew, grade, ...rest } = p; // grade sparas inte längre, den räknas fram
     const fix = r => (r[0] > r[1] ? [r[1], r[0]] : r);
-    await env.repo.saveProfile({ ...rest, name: p.name.trim(), grade: Number(p.grade), schedule: { ...sch, training: fix(sch.training), free: fix(sch.free) } });
+    await env.repo.saveProfile({ ...rest, name: p.name.trim(), birthYear: Number(p.birthYear), birthMonth: p.birthMonth ? Number(p.birthMonth) : null, gradeOffset: Number(p.gradeOffset) || 0, schedule: { ...sch, training: fix(sch.training), free: fix(sch.free) } });
     onDone();
   }
   return html`<form class="sheet form inset" onSubmit=${save}>
-    <div class="row2">
-      <div><label for="pf-name">Namn</label><input id="pf-name" value=${p.name} onInput=${e => setP({ ...p, name: e.target.value })} /></div>
-      <div><label for="pf-grade">Årskurs</label><select id="pf-grade" value=${p.grade} onChange=${e => setP({ ...p, grade: e.target.value })}>
-        ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(g => html`<option value=${g}>${g}</option>`)}</select></div>
-    </div>
+    <label for="pf-name">Namn</label><input id="pf-name" value=${p.name} onInput=${e => setP({ ...p, name: e.target.value })} />
+    <${BirthFields} year=${p.birthYear} month=${p.birthMonth} offset=${p.gradeOffset} prefix="pf"
+      onYear=${v => setP({ ...p, birthYear: Number(v) })} onMonth=${v => setP({ ...p, birthMonth: v ? Number(v) : null })} onOffset=${v => setP({ ...p, gradeOffset: v })} />
     ${accounts && html`<div><label for="pf-account">Barnets konto</label>
       <select id="pf-account" value=${p.account || ''} onChange=${e => setP({ ...p, account: e.target.value || undefined })}>
         <option value="">Inget (övar på en förälders enhet)</option>
@@ -383,13 +400,13 @@ function NewTestForm({ env, profiles, onCancel, onCreated }) {
     if (!t.profileId) return setErr('Lägg till ett barn först.');
     if (!t.subject.trim()) return setErr('Skriv vilket ämne provet gäller.');
     const id = uid('t');
-    await env.repo.saveTest({ id, ...t, subject: t.subject.trim(), grade: prof?.grade || 5, status: 'draft' });
+    await env.repo.saveTest({ id, ...t, subject: t.subject.trim(), grade: gradeOf(prof), status: 'draft' });
     onCreated(id);
   }
   return html`<form class="sheet form inset" onSubmit=${submit}>
     <div class="row2">
       <div><label for="nt-prof">Barn</label><select id="nt-prof" value=${t.profileId} onChange=${e => setT({ ...t, profileId: e.target.value })}>
-        ${profiles.map(p => html`<option value=${p.id}>${p.name} (åk ${p.grade})</option>`)}</select></div>
+        ${profiles.map(p => html`<option value=${p.id}>${p.name} (åk ${gradeOf(p)})</option>`)}</select></div>
       <div><label for="nt-date">Provdatum</label><input id="nt-date" type="date" value=${t.testDate} onInput=${e => setT({ ...t, testDate: e.target.value })} /></div>
     </div>
     <label for="nt-subj">Ämne</label>
@@ -936,7 +953,7 @@ function ChildHome({ env, go, profileId }) {
   }, [profileId]);
   if (!data) return html`<p class="muted">Laddar…</p>`;
   if (!data.profile) return html`<p class="notice bad">Profilen finns inte.</p>`;
-  const young = data.profile.grade <= 4;
+  const young = gradeOf(data.profile) <= 4;
   const look = { ...KOMPIS_DEFAULT, ...(data.profile.kompis || {}) };
   // Dagens pass: provet med närmast datum som har minuter kvar i dag.
   const todays = data.tests.filter(t => t.today && t.today.minutes > 0)
@@ -1063,7 +1080,7 @@ function Practice({ env, go, testId, profileId }) {
   }, [result?.attemptId, result?.verdict]);
 
   if (!state) return html`<p class="muted">Laddar…</p>`;
-  const young = (state.profile?.grade || 5) <= 4;
+  const young = gradeOf(state.profile) <= 4;
   const finished = !current || log.length >= SESSION_LENGTH;
   const today = dayKey(Date.now());
   const plan = planFor(state);

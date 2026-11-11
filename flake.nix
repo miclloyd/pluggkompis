@@ -33,7 +33,7 @@
 
     pluggkompis = pkgs.buildGoModule {
       pname = "pluggkompis";
-      version = "0.4.0";
+      version = "0.5.0";
       src = lib.cleanSource ./.;
       # Ändras go.mod: sätt lib.fakeHash, kör `nix build`, klistra in värdet.
       vendorHash = "sha256-MXye7VFLRqXHCbq8ZUJrSJQGRAiCqTqod7z2tLgy0eg=";
@@ -54,8 +54,15 @@
       default = pluggkompis;
       inherit pluggkompis libs;
     };
-    # Go-testerna körs i bygget (checkPhase).
-    checks.${system}.default = pluggkompis;
+    # Go-testerna körs i bygget (checkPhase); JS-logiken (web/grade.js, senare
+    # matematiken i engine) med Node — bara vid bygget, ingen Node i drift.
+    checks.${system} = {
+      default = pluggkompis;
+      js = pkgs.runCommand "pluggkompis-js-tester" {nativeBuildInputs = [pkgs.nodejs];} ''
+        cp -r ${./web} web && cp -r ${./test} test
+        node --test test/*.test.mjs && touch $out
+      '';
+    };
     devShells.${system}.default = pkgs.mkShell {
       packages = [pkgs.go pkgs.gopls pkgs.sqlite];
       env.CGO_ENABLED = "0";
