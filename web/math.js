@@ -73,6 +73,8 @@ export function rng(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+// Avrundar x tusendelar till to decimaler (halvt uppåt), i heltal: svaret i 10^to-delar.
+export const roundThousandths = (x, to) => { const step = 1000 / 10 ** to; return Math.floor((x + step / 2) / step); };
 const int = (r, lo, hi) => lo + Math.floor(r() * (hi - lo + 1));
 const pick = (r, arr) => arr[Math.floor(r() * arr.length)];
 const sv = n => String(n).replace('-', '−');
@@ -216,7 +218,7 @@ const G = {
       if (hard) {
         // Heltal i tusendelar, aldrig flyttal (2,675 · 100 är 267,49999… i flyttal).
         let x; do x = int(r, 1001, 99999); while (x % 10 === 0);
-        const to = pick(r, [1, 2]), p = 10 ** to, step = 1000 / p, rv = Math.floor((x + step / 2) / step);
+        const to = pick(r, [1, 2]), p = 10 ** to, rv = roundThousandths(x, to);
         return { q: `Avrunda ${show(frac(x, 1000))} till ${to === 1 ? 'en decimal' : 'två decimaler'}.`, answer: frac(rv, p), decimalOnly: true,
           steps: [`Titta på siffran efter ${to === 1 ? 'första' : 'andra'} decimalen.`, '0–4 avrundas nedåt, 5–9 uppåt.', `Svaret är ${show(frac(rv, p))}`],
           hints: ['Vilken siffra bestämmer om det blir uppåt eller nedåt?', '5 eller mer: uppåt.'] };

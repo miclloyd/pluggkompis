@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAnswer, show, frac, checkMath, mathBank, SKILLS } from '../web/math.js';
+import { parseAnswer, show, frac, checkMath, mathBank, SKILLS, roundThousandths } from '../web/math.js';
 
 const val = v => v.n / v.d;
 const num = s => Number(String(s).replace('−', '-').replace(',', '.'));
@@ -151,6 +151,10 @@ test('frågebanken för matematik byggs utan AI', async () => {
 });
 
 test('avrundning med kända flyttalsfällor', () => {
+  assert.equal(roundThousandths(2675, 2), 268); // 2,675 → 2,68 (flyttal: 2,67)
+  assert.equal(roundThousandths(1005, 2), 101); // 1,005 → 1,01 (flyttal: 1,00)
+  assert.equal(roundThousandths(1250, 1), 13);  // 1,25 → 1,3
+  assert.equal(roundThousandths(1249, 1), 12);
   // 2,675 och 1,005 avrundas uppåt (flyttal ger 2,67 och 1,00).
   for (let s = 0; s < 400; s++) for (const it of mathBank({ id: 'r' + s, skill: 'avrundning' }).filter(i => i.level === 4)) {
     if (/Avrunda 2,675 till två/.test(it.q)) assert.equal(it.answerText, '2,68');
