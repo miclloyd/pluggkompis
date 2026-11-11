@@ -1390,7 +1390,10 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
     ${free && result.feedback && html`<p>${result.feedback}</p>`}
     ${free && html`<${Checks} must=${item.must} met=${result.met} />`}
     ${free
-      ? result.verdict !== 'right' && html`<p class="answer-line">Exempel på bra svar: <strong>${item.answer}</strong></p>`
+      ? result.verdict !== 'right' && (item.moves
+        // Resonemang: kompisens följdfråga först, exemplet bara om barnet vill se det.
+        ? html`<details class="answer-line"><summary>Visa ett exempel på svar</summary><strong>${item.answer}</strong></details>`
+        : html`<p class="answer-line">Exempel på bra svar: <strong>${item.answer}</strong></p>`)
       : result.verdict !== 'right' && html`<p class="answer-line">Rätt svar: <strong>${correctAnswerText(item)}</strong></p>`}
     ${cw && html`<${CoverWrite} word=${correctAnswerText(item)} onDone=${onCopyDone} />`}
     ${item.explain && html`<p>${item.explain}</p>`}

@@ -2,7 +2,7 @@
 // Versionen sparas på allt som genereras, så att gamla frågor kan spåras till sin prompt.
 import { GOAL_TYPES, TYPE_MAX, hasSpellingLure } from './engine.js';
 
-export const PROMPT_VERSION = 'p2.3';
+export const PROMPT_VERSION = 'p2.4';
 
 const json = v => JSON.stringify(v);
 
@@ -331,6 +331,18 @@ const HIGH_LEVELS = {
   5: 'Nivå 5 (provlikt): 2 frågor formulerade som på ett riktigt prov, gärna där flera delar ska med. kind "explain".',
 };
 
+// Materialprofil resonemang (plan 1.6): nivåtrappan räknar resonemangsdrag i stället
+// för fler fakta. Dragen blir egna punkter i bedömningsmallen, så att rättning,
+// omrättning och föräldravyn fungerar som för andra fritextfrågor.
+export const MOVES = {
+  orsak: 'förklarar varför (en orsak)',
+  exempel: 'ger ett exempel',
+  följd: 'beskriver en följd eller konsekvens',
+  jämförelse: 'jämför med något annat',
+  synvinkel: 'tar upp en annan synvinkel',
+};
+const MOVES_PER_LEVEL = { 3: 1, 4: 2, 5: 3 };
+
 export function highLevelsFor(goal) {
   if (goal.type === 'glosa') return [4];
   const max = TYPE_MAX[goal.type] || 3;
@@ -358,7 +370,13 @@ Nivåer:
 - ${HIGH_LEVELS[4]}
 - ${HIGH_LEVELS[5]}
 - Glosor, nivå 4: 3 frågor där barnet skriver en egen mening med ordet. kind "sentence".
-
+${goals.some(g => g.type === 'resonemang') ? `
+För resonemang-mål är nivåerna en trappa av resonemangsdrag (orsak, exempel, följd, jämförelse, synvinkel):
+- Nivå 3 (enkelt resonemang): ett påstående och varför. "moves": ["orsak"].
+- Nivå 4 (utvecklat): varför och ett exempel eller en följd. "moves": ["orsak", "exempel"] eller ["orsak", "följd"].
+- Nivå 5 (välutvecklat): varför, en följd och en jämförelse eller annan synvinkel. "moves": ["orsak", "följd", "jämförelse"] eller ["orsak", "följd", "synvinkel"].
+För dessa frågor innehåller "must" bara fakta som svaret ska stämma med (nivå 3: 1 punkt, nivå 4–5: 1–2 punkter). Dragen skrivs i "moves", inte i "must". Frågan ska bjuda in till resonemang ("Varför tror du …?", "Vad hade hänt om …?"), inte till att räkna upp fakta.
+` : ''}
 Varje fråga får ett modellsvar och en bedömningsmall:
 {"goal":"g1","level":3,"kind":"short","q":"...","answer":"<ett bra svar som ett barn i årskursen kan ge>","must":["<punkt som måste finnas med>","..."],"explain":"<högst två meningar>","quote":"<den mening i underlaget som svaret bygger på, ordagrant>","src":{"m":"m1","p":1}}
 
@@ -385,12 +403,23 @@ export function validateHigh(out, goals, validRefs) {
     if (it.kind !== kind) { errors.push(`${tag}: ska ha kind "${kind}".`); continue; }
     if (typeof it.q !== 'string' || !it.q.trim()) { errors.push(`${tag}: saknar frågetext.`); continue; }
     if (typeof it.answer !== 'string' || !it.answer.trim()) { errors.push(`${tag}: saknar modellsvar.`); continue; }
-    const must = (Array.isArray(it.must) ? it.must : []).map(s => String(s).trim()).filter(Boolean);
-    const [lo, hi] = kind === 'sentence' ? [2, 2] : level === 3 ? [1, 2] : level === 4 ? [2, 3] : [2, 4];
-    if (must.length < lo || must.length > hi) { errors.push(`${tag}: bedömningsmallen ska ha ${lo}–${hi} punkter.`); continue; }
+    let must = (Array.isArray(it.must) ? it.must : []).map(s => String(s).trim()).filter(Boolean);
+    let moves = null;
+    if (goal.type === 'resonemang') {
+      moves = [...new Set((Array.isArray(it.moves) ? it.moves : []).map(String))];
+      if (moves.length !== MOVES_PER_LEVEL[level] || !moves.every(m => MOVES[m]) || !moves.includes('orsak')) {
+        errors.push(`${tag}: "moves" ska ha ${MOVES_PER_LEVEL[level]} drag på nivå ${level}, bland dem "orsak".`); continue;
+      }
+      const [flo, fhi] = level === 3 ? [1, 1] : [1, 2];
+      if (must.length < flo || must.length > fhi) { errors.push(`${tag}: "must" ska ha ${flo}–${fhi} faktapunkter.`); continue; }
+      must = [...must, ...moves.map(m => MOVES[m])];
+    } else {
+      const [lo, hi] = kind === 'sentence' ? [2, 2] : level === 3 ? [1, 2] : level === 4 ? [2, 3] : [2, 4];
+      if (must.length < lo || must.length > hi) { errors.push(`${tag}: bedömningsmallen ska ha ${lo}–${hi} punkter.`); continue; }
+    }
     const src = { m: String(it.src?.m || ''), p: Number(it.src?.p) };
     if (!validRefs.has(`${src.m}:${src.p}`) && !(goal.parentNote && src.m === 'note')) { errors.push(`${tag}: saknar giltig källa.`); continue; }
-    byGoal[goal.id].push({ goalId: goal.id, level, kind, q: it.q.trim(), answer: it.answer.trim(), must, explain: String(it.explain || '').trim(), src, pv: PROMPT_VERSION,
+    byGoal[goal.id].push({ goalId: goal.id, level, kind, q: it.q.trim(), answer: it.answer.trim(), must, ...(moves ? { moves } : {}), explain: String(it.explain || '').trim(), src, pv: PROMPT_VERSION,
       ...(typeof it.quote === 'string' && it.quote.trim() ? { quote: it.quote.trim() } : {}) });
   }
   const short = [];
@@ -429,7 +458,8 @@ Så här bedömer du:
 ${String(answer).slice(0, 2000)}
 SVAR>>>
 
-feedback: högst två korta meningar till barnet på svenska. Säg först vad som var bra, sedan vad som saknades, utan att skriva ut hela svaret.
+${item.moves?.length ? `Punkterna ${item.must.length - item.moves.length + 1}–${item.must.length} är resonemangsdrag: de är uppfyllda när barnet själv gör draget i svaret, även med andra ord. Faktapunkterna kräver att det barnet säger stämmer med underlaget.
+feedback: säg kort vad som var bra. Saknas ett drag, avsluta med EN följdfråga som hjälper barnet att göra det första draget som saknas ("Varför tror du att …?", "Kan du ge ett exempel?", "Vad blir följden av …?", "Hur kan någon annan se på det?"). Skriv aldrig ut svaret eller facit.` : 'feedback: högst två korta meningar till barnet på svenska. Säg först vad som var bra, sedan vad som saknades, utan att skriva ut hela svaret.'}
 confidence: "hög", eller "låg" om svaret är tvetydigt, svårt att förstå eller ligger på gränsen.
 
 Svara endast med JSON: {"met":[true,false],"feedback":"...","confidence":"hög"}`;
