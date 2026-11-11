@@ -244,7 +244,7 @@ func (s *server) restrictedTask(r *http.Request, p string, body []byte) ([]byte,
 		if _, err := allowed(owner); err != nil {
 			return nil, err
 		}
-		for _, k := range []string{"profileId", "support", "createdAt"} {
+		for _, k := range []string{"profileId", "support", "createdAt", "firstAt"} {
 			if v, ok := stored[k]; ok {
 				in[k] = v
 			} else {
@@ -316,23 +316,28 @@ func (s *server) checkTaskVersions(r *http.Request, owner string, storedRaw json
 		return nil
 	}
 	var v struct {
-		Feedback json.RawMessage `json:"feedback"`
-		Blocked  bool            `json:"blocked"`
+		Feedback map[string]json.RawMessage `json:"feedback"`
+		Blocked  bool                       `json:"blocked"`
 	}
 	if json.Unmarshal(next[len(next)-1], &v) != nil || (len(v.Feedback) == 0 && !v.Blocked) {
 		return errBadDoc
 	}
 	if len(stored) == 0 {
+		// Veckan räknas från varje uppgifts första feedback (firstAt, satt här av
+		// servern och låst), inte från senaste ändringen.
+		now := s.st.now()
 		var n int
 		err := s.st.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM docs WHERE parent = 'tasks' AND path <> ?
-  AND json_extract(data, '$.profileId') = ? AND json_array_length(json_extract(data, '$.versions')) > 0 AND updated_at >= ?`,
-			r.PathValue("path"), owner, s.st.now().Add(-7*24*time.Hour).UnixMilli()).Scan(&n)
+  AND json_extract(data, '$.profileId') = ? AND json_extract(data, '$.firstAt') >= ?`,
+			r.PathValue("path"), owner, now.Add(-7*24*time.Hour).UnixMilli()).Scan(&n)
 		if err != nil {
 			return err
 		}
 		if n >= maxTasksPerWeek {
 			return errWeekLimit
 		}
+		at, _ := json.Marshal(now.UnixMilli())
+		in["firstAt"] = at
 	}
 	return nil
 }

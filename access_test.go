@@ -394,7 +394,7 @@ func TestTasks(t *testing.T) {
 // Versionerna är en logg: barnet lägger till en i taget, med feedback, högst tre,
 // och ändrar aldrig tidigare. Veckogränsen gäller på servern.
 func TestTaskVersionsAppendOnly(t *testing.T) {
-	_, h := testServer(t)
+	a, h := testServer(t)
 	seedFamily(t, h)
 	v := func(n int) string { return fmt.Sprintf(`{"n":%d,"text":"t%d","feedback":{"strength":"Bra."}}`, n, n) }
 	put := func(id, versions string) int {
@@ -437,5 +437,25 @@ func TestTaskVersionsAppendOnly(t *testing.T) {
 	put("k4", "")
 	if w := do(h, child, "PUT", "/api/store/tasks/k4", `{"profileId":"p1","versions":[`+v(1)+`]}`); w.Code != 403 || !strings.Contains(w.Body.String(), "veckan") {
 		t.Fatalf("veckogränsen: %d %s", w.Code, w.Body)
+	}
+	// Barnet kan inte flytta sin egen firstAt.
+	do(h, child, "PATCH", "/api/store/tasks/k1", `{"firstAt":0}`)
+	if b := do(h, child, "GET", "/api/store/tasks/k1", "").Body.String(); strings.Contains(b, `"firstAt":0`) {
+		t.Fatalf("firstAt ändrad: %s", b)
+	}
+	// Att redigera en gammal uppgift räknar inte in den igen; efter åtta dagar går det.
+	real := a.st.now
+	a.st.now = func() time.Time { return real().Add(8 * 24 * time.Hour) }
+	do(h, child, "PATCH", "/api/store/tasks/k2", `{"title":"ändrad"}`)
+	do(h, child, "PATCH", "/api/store/tasks/k3", `{"title":"ändrad"}`)
+	if w := do(h, child, "PUT", "/api/store/tasks/k4", `{"profileId":"p1","versions":[`+v(1)+`]}`); w.Code != 204 {
+		t.Fatalf("ny vecka: %d %s", w.Code, w.Body)
+	}
+	// Påhittad feedback (null eller inte ett objekt) nekas.
+	put("k5", "")
+	for _, fb := range []string{`null`, `"bra"`, `{}`} {
+		if c := put("k5", `{"n":1,"feedback":`+fb+`}`); c != 400 {
+			t.Errorf("feedback %s: %d", fb, c)
+		}
 	}
 }
