@@ -17,18 +17,27 @@ export async function createServerAdapters(config) {
     return r.status === 204 ? null : r.json();
   };
 
+  // Vilket tak anropet räknas mot sätts av appen utifrån vyn (app.js → aiScope):
+  // { purpose: 'child', profileId } när barnet övar, { purpose: 'build', testId }
+  // när föräldern bygger ett prov. Servern kontrollerar att det stämmer.
+  let scope = {};
   const ai = config.features?.ai ? {
+    setScope(s) { scope = s || {}; },
     async complete({ prompt, images, tier = 'default', json = false, signal }) {
       const form = new FormData();
-      form.append('request', JSON.stringify({ prompt, tier, json }));
+      form.append('request', JSON.stringify({ prompt, tier, json, ...scope }));
       for (const img of images || []) form.append('images', img);
-      const r = await fetch('/api/ai', { method: 'POST', body: form, signal, credentials: 'same-origin' });
-      if (!r.ok) {
-        const e = new Error((await r.json().catch(() => ({}))).message || 'AI-anropet misslyckades');
-        e.code = r.status === 429 ? 'rate_limited' : 'upstream_error';
-        throw e;
+      let r;
+      try {
+        r = await fetch('/api/ai', { method: 'POST', body: form, signal, credentials: 'same-origin' });
+      } catch (x) {
+        throw Object.assign(new Error(signal?.aborted ? 'Avbrutet.' : 'Ingen kontakt med servern. Försök igen.'), { code: signal?.aborted ? 'cancelled' : 'upstream_error' });
       }
-      return r.json(); // { text } eller { json }
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw Object.assign(new Error(d.message || 'AI-anropet misslyckades'), { code: d.code || 'upstream_error' });
+      }
+      return r.json(); // { text, truncated } eller { json }
     },
   } : null;
 

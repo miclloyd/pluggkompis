@@ -24,7 +24,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-var version = "0.2.0"
+var version = "0.3.0"
 
 // User: ett Tailscale-konto som får använda appen. Devices (stable ID) är
 // valfritt; anges det måste även enheten stämma. Det behövs för den förälder som
@@ -38,29 +38,31 @@ type User struct {
 }
 
 type Config struct {
-	Users []User `json:"users"`
+	Users  []User `json:"users"`
+	Models Models `json:"models"`
+	Limits Limits `json:"limits"`
 }
 
-func loadConfig(path string) ([]User, error) {
+func loadConfig(path string) (Config, error) {
+	var c Config
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return c, err
 	}
-	var c Config
 	if err := json.Unmarshal(b, &c); err != nil {
-		return nil, err
+		return c, err
 	}
 	seen := map[string]bool{}
 	for _, u := range c.Users {
 		if u.ID == "" || u.Login == "" || (u.Role != "parent" && u.Role != "child") {
-			return nil, fmt.Errorf("användare %q: id, login och roll (parent/child) krävs", u.Login)
+			return c, fmt.Errorf("användare %q: id, login och roll (parent/child) krävs", u.Login)
 		}
 		if seen[u.ID] || seen["login:"+u.Login] {
-			return nil, fmt.Errorf("användare %q: id eller login finns två gånger", u.Login)
+			return c, fmt.Errorf("användare %q: id eller login finns två gånger", u.Login)
 		}
 		seen[u.ID], seen["login:"+u.Login] = true, true
 	}
-	return c.Users, nil
+	return c, nil
 }
 
 func main() {
@@ -72,6 +74,8 @@ func main() {
 	keyFile := flag.String("authkey-file", "", "Tailscale-nyckel (bara första inloggningen)")
 	dev := flag.String("dev", "", "lokal utveckling utan tsnet, t.ex. 127.0.0.1:8095")
 	demo := flag.Bool("demo", false, "fyll en tom databas med exempelprovet (examples/)")
+	aiKeyFile := flag.String("anthropic-key-file", "", "API-nyckel till Anthropic (tom = ingen AI)")
+	devAIURL := flag.String("dev-ai-url", "", "låtsas-AI i stället för Anthropic (bara med -dev)")
 	devAs := flag.String("dev-as", "parent", "dev-identitetens roll: parent | child (barnet heter devbarn)")
 	flag.Parse()
 
@@ -107,6 +111,17 @@ func main() {
 		}
 	}
 	a := &server{st: st, auth: auth, index: index}
+	setupAI := func(key string, c Config) {
+		if key == "" {
+			log.Print("ingen API-nyckel: AI är avstängt")
+			return
+		}
+		if a.ai, err = newAI(st, key, c.Models, c.Limits); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("AI: %s/%s/%s, tak %d per barn och dag, %d per prov",
+			a.ai.models.Quick, a.ai.models.Default, a.ai.models.Complex, a.ai.limits.ChildPerDay, a.ai.limits.PerTest)
+	}
 
 	if *dev != "" {
 		if *stateDir != "" {
@@ -126,6 +141,12 @@ func main() {
 			me = users[1]
 		}
 		a.who = devWho{who{login: me.Login, node: "dev"}}
+		if *devAIURL != "" {
+			setupAI("dev", Config{})
+			a.ai.url = *devAIURL
+		} else {
+			setupAI(readKey(*aiKeyFile), Config{})
+		}
 		log.Printf("pluggkompis %s (dev): http://%s/", version, *dev)
 		srv := &http.Server{Addr: *dev, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 		log.Fatal(srv.ListenAndServe())
@@ -134,11 +155,12 @@ func main() {
 	if *stateDir == "" || *cfgPath == "" {
 		log.Fatal("-state och -config krävs (eller -dev för lokal utveckling)")
 	}
-	users, err := loadConfig(*cfgPath)
+	cfg, err := loadConfig(*cfgPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	a.setUsers(users)
+	a.setUsers(cfg.Users)
+	setupAI(readKey(*aiKeyFile), cfg)
 	var key string
 	if *keyFile != "" {
 		b, err := os.ReadFile(*keyFile)
@@ -182,6 +204,17 @@ func main() {
 	log.Printf("pluggkompis lyssnar på https://%s", fqdn)
 	srv := &http.Server{Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.Serve(ln))
+}
+
+func readKey(path string) string {
+	if path == "" {
+		return ""
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // ── identitet ────────────────────────────────────────────────────────────────

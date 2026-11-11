@@ -61,9 +61,9 @@ func clientConfig(ai bool) map[string]any {
 		"env": "server",
 		"features": map[string]any{
 			"ai":             ai,
-			"images":         false,
-			"imageMaxCount":  0,
-			"maxPromptBytes": 200000,
+			"images":         ai,
+			"imageMaxCount":  maxImages,
+			"maxPromptBytes": maxPromptBytes,
 			"persistent":     true,
 			"files":          true,
 			"save":           true,
@@ -90,6 +90,7 @@ const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inl
 type server struct {
 	st       *Store
 	auth     *Auth
+	ai       *AI // nil = ingen nyckel
 	who      whoer
 	users    map[string]User // login → användare
 	userList []User          // i konfigurationens ordning
@@ -116,7 +117,7 @@ func (a *server) routes() http.Handler {
 	mux.Handle("GET /", static)
 
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, clientConfig(false))
+		writeJSON(w, http.StatusOK, clientConfig(a.ai != nil))
 	})
 	mux.HandleFunc("GET /api/auth", a.authStatus)
 	mux.HandleFunc("POST /api/auth/pin", a.authSetPIN)
@@ -126,6 +127,7 @@ func (a *server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/store/{path...}", a.storeSet)
 	mux.HandleFunc("PATCH /api/store/{path...}", a.storeUpdate)
 	mux.HandleFunc("DELETE /api/store/{path...}", a.storeDelete)
+	mux.HandleFunc("POST /api/ai", a.aiHandler)
 	mux.HandleFunc("POST /api/files", a.filePut)
 	mux.HandleFunc("GET /api/files/{id}", a.fileGet)
 	mux.HandleFunc("DELETE /api/files/{id}", a.fileDelete)

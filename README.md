@@ -39,8 +39,17 @@ föräldrakonto övar som barn tills föräldraläget låses upp med PIN (en lå
 servern och lämnar den aldrig; fem fel ger en spärr som fördubblas. Upplåst läge gäller i 30 minuter utan aktivitet.
 Detaljer i `access.go` och `auth.go`.
 
-## Status (0.2.0)
+## AI
+
+`/api/ai` gör anropen till Anthropic med nyckeln från servern (`-anthropic-key-file`). Nivåerna `quick`,
+`default` och `complex` blir Haiku, Sonnet och Sonnet (ändras i konfigurationen, `models`). Två tak (`limits`):
+allt barnet startar (rättning, Förklara mer, Lär ut det) högst 150 anrop per profil och dygn; det föräldern startar
+när ett prov byggs högst 300 anrop per prov. När barnets tak är nått rättar barnet själv med facit. Loggen
+(`ai_log`) har antal tokens per anrop, aldrig prompt eller svar. Lokalt: `-dev-ai-url` pekar på en låtsas-AI.
+
+## Status (0.3.0)
 
 Klart: lagring och filer i SQLite, inbäddad frontend med egna kopior av biblioteken, CSP, WhoIs-kontroll, roller och
 PIN på servern, demoläge (`-dev-as child` visar barnets vy).
-Inte än: `/api/ai` med tak och nyckel, import av säkerhetskopia, skoluppgifter och materialprofiler.
+AI via servern med tak per barn och prov.
+Inte än: import av säkerhetskopia, skoluppgifter och materialprofiler, strömmande svar i Förklara mer.

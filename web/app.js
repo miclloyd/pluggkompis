@@ -82,6 +82,7 @@ function App() {
 
   const go = r => { setRoute(r); window.scrollTo(0, 0); };
   const ctx = { env, go, parentOk, setParentOk };
+  env.ai?.setScope?.(aiScope(route));
 
   let view;
   switch (route.name) {
@@ -106,6 +107,13 @@ function App() {
     </header>
     <${EnvNotice} config=${env.config} />
     <main class="wrap" key=${JSON.stringify(route)}>${view}</main>`;
+}
+
+// Vilket tak AI-anropen räknas mot på servern: barnets dag eller provets bygge.
+function aiScope(route) {
+  if (route.name === 'test') return { purpose: 'build', testId: route.testId };
+  if (route.profileId) return { purpose: 'child', profileId: route.profileId, testId: route.testId };
+  return {};
 }
 
 function EnvNotice({ config }) {
