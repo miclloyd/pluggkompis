@@ -303,11 +303,12 @@ func TestChildGrade(t *testing.T) {
 		now     string
 		want    int
 	}{
-		{2012, 0, "2026-11-11", 8}, // född 2012 = åk 8 hösten 2026
-		{2012, 0, "2027-06-30", 8},
-		{2012, 0, "2027-07-01", 9}, // läsåret byts 1 juli
-		{2012, -1, "2026-11-11", 7},
-		{2025, 0, "2026-11-11", 0},
+		// Fiktiv framtid (läsåret 2040/41): inga årtal som kan vara verkliga barns.
+		{2026, 0, "2040-11-11", 8},
+		{2026, 0, "2041-06-30", 8},
+		{2026, 0, "2041-07-01", 9}, // läsåret byts 1 juli
+		{2026, -1, "2040-11-11", 7},
+		{2040, 0, "2040-11-11", 0},
 	} {
 		if g := childGrade(c.by, c.off, at(c.now)); g != c.want {
 			t.Errorf("%d%+d %s: %d, väntade %d", c.by, c.off, c.now, g, c.want)
@@ -318,19 +319,23 @@ func TestChildGrade(t *testing.T) {
 func TestChildNeverSeesBirthYear(t *testing.T) {
 	_, h := testServer(t)
 	pc := seedFamily(t, h)
-	doC(h, parent, "PATCH", "/api/store/profiles/p1", `{"birthYear":2012,"birthMonth":4,"gradeOffset":0}`, pc)
+	doC(h, parent, "PATCH", "/api/store/profiles/p1", `{"birthYear":2030,"birthMonth":4,"gradeOffset":0}`, pc)
 	for _, url := range []string{"/api/store/profiles/p1", "/api/store/profiles?list=1"} {
 		b := do(h, child, "GET", url, "").Body.String()
 		if strings.Contains(b, "birth") || strings.Contains(b, "gradeOffset") || !strings.Contains(b, `"grade":`) {
 			t.Errorf("%s: %s", url, b)
 		}
 	}
-	if b := do(h, parent, "GET", "/api/store/profiles/p1", "").Body.String(); !strings.Contains(b, `"birthYear":2012`) {
+	if b := do(h, parent, "GET", "/api/store/profiles/p1", "").Body.String(); !strings.Contains(b, `"birthYear":2030`) {
 		t.Errorf("föräldern: %s", b)
 	}
-	// Barnets temabyte (hela profilen skickas) får inte radera födelseåret.
+	// Barnets sparning (PUT med hela profilen, och PATCH) får inte radera födelseåret.
+	do(h, child, "PATCH", "/api/store/profiles/p1", `{"birthYear":null,"theme":"light"}`)
+	if b := do(h, parent, "GET", "/api/store/profiles/p1", "").Body.String(); !strings.Contains(b, `"birthYear":2030`) || !strings.Contains(b, `"theme":"light"`) {
+		t.Errorf("efter barnets PATCH: %s", b)
+	}
 	do(h, child, "PUT", "/api/store/profiles/p1", `{"name":"Ett","grade":5,"theme":"dark"}`)
-	if b := do(h, parent, "GET", "/api/store/profiles/p1", "").Body.String(); !strings.Contains(b, `"birthYear":2012`) || !strings.Contains(b, `"theme":"dark"`) {
+	if b := do(h, parent, "GET", "/api/store/profiles/p1", "").Body.String(); !strings.Contains(b, `"birthYear":2030`) || !strings.Contains(b, `"theme":"dark"`) {
 		t.Errorf("efter barnets temabyte: %s", b)
 	}
 }

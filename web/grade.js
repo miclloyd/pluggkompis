@@ -11,8 +11,8 @@ export function schoolYearStart(now = new Date()) {
 
 export function gradeOf(p, now = new Date()) {
   if (p?.birthYear) return Math.max(0, Math.min(9, schoolYearStart(now) - p.birthYear - 6 + (p.gradeOffset || 0)));
-  const g = Number(p?.grade);
-  return p?.grade != null && Number.isFinite(g) ? g : 5; // årskurs 0 (förskoleklass) är giltig
+  const g = p?.grade === '' || p?.grade == null ? NaN : Number(p.grade);
+  return Number.isFinite(g) ? Math.max(0, Math.min(9, g)) : 5; // årskurs 0 (förskoleklass) är giltig
 }
 
 export function birthYearFor(grade, now = new Date()) {

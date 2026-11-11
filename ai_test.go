@@ -295,12 +295,12 @@ func TestUsage(t *testing.T) {
 	}
 }
 
-// Bara takstopp för en hink: summorna får inte bli NULL (500).
+// En hink med bara takstopp (inga anrop till Anthropic) ger nollor, inte fel.
 func TestUsageOnlyLimited(t *testing.T) {
 	a, h, _, pc := aiServer(t, Limits{})
 	a.ai.logCall("child:p1:2026-11-11", "quick", "", "limit", 0, 0)
-	a.st.db.Exec(`UPDATE ai_log SET input_tokens = NULL, output_tokens = NULL`)
-	if w := doC(h, parent, "GET", "/api/usage", "", pc); w.Code != 200 {
+	w := doC(h, parent, "GET", "/api/usage", "", pc)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"calls":0`) || !strings.Contains(w.Body.String(), `"limited":1`) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }

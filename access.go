@@ -190,8 +190,8 @@ func (s *server) restrictedProfile(ctx context.Context, p string, body []byte) (
 		return nil, err
 	}
 	var doc, in map[string]json.RawMessage
-	if err := json.Unmarshal(cur, &doc); err != nil {
-		return nil, err
+	if err := json.Unmarshal(cur, &doc); err != nil || doc == nil {
+		return nil, errBadDoc
 	}
 	if err := json.Unmarshal(body, &in); err != nil || in == nil {
 		return nil, errBadDoc
