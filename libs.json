@@ -1,0 +1,66 @@
+{
+  "_kommentar": "Pinnade bibliotek för servern. Samma hashar som MANIFEST.md (npm-tarbollar). Läses av flake.nix och dev/libs.sh; filerna hamnar i libs/ och bäddas in i binären.",
+  "packages": [
+    {
+      "name": "htm",
+      "url": "https://registry.npmjs.org/htm/-/htm-3.1.1.tgz",
+      "hash": "sha512-983Vyg8NwUE7JkZ6NmOqpCZ+sh1bKv2iYTlUkzlWmA5JD2acKoxd4KVxbMmxX/85mtfdnDmTFoNKcg5DGAvxNQ==",
+      "files": {
+        "package/preact/standalone.umd.js": "htm-preact-standalone.umd.js",
+        "package/LICENSE": "licenses/htm-LICENSE"
+      }
+    },
+    {
+      "name": "pdfjs-dist",
+      "url": "https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-3.11.174.tgz",
+      "hash": "sha512-TdTZPf1trZ8/UFu5Cx/GXB7GZM30LT+wWUNfsi6Bq8ePLnb+woNKtDymI2mxZYBpMbonNFqKmiz684DIfnd8dA==",
+      "files": {
+        "package/build/pdf.min.js": "pdf.min.js",
+        "package/build/pdf.worker.min.js": "pdf.worker.min.js",
+        "package/LICENSE": "licenses/pdfjs-LICENSE"
+      }
+    },
+    {
+      "name": "jszip",
+      "url": "https://registry.npmjs.org/jszip/-/jszip-3.10.1.tgz",
+      "hash": "sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==",
+      "files": {
+        "package/dist/jszip.min.js": "jszip.min.js",
+        "package/LICENSE.markdown": "licenses/jszip-LICENSE.md"
+      }
+    },
+    {
+      "name": "jspdf",
+      "url": "https://registry.npmjs.org/jspdf/-/jspdf-4.2.1.tgz",
+      "hash": "sha512-YyAXyvnmjTbR4bHQRLzex3CuINCDlQnBqoSYyjJwTP2x9jDLuKDzy7aKUl0hgx3uhcl7xzg32agn5vlie6HIlQ==",
+      "files": {
+        "package/dist/jspdf.umd.min.js": "jspdf.umd.min.js",
+        "package/LICENSE": "licenses/jspdf-LICENSE"
+      }
+    },
+    {
+      "name": "atkinson-hyperlegible",
+      "url": "https://registry.npmjs.org/@fontsource/atkinson-hyperlegible/-/atkinson-hyperlegible-5.1.0.tgz",
+      "hash": "sha512-2qT7mpgHWYM0bB3+5zbcfy49PD5xil/8t3maXxdgFpJo2dFaD9qBgk5u72KgK7ZtmGOWbCjCoAk5e+vpOIqfvA==",
+      "files": {
+        "package/files/atkinson-hyperlegible-latin-400-normal.woff2": "fonts/atkinson-latin-400-normal.woff2",
+        "package/files/atkinson-hyperlegible-latin-700-normal.woff2": "fonts/atkinson-latin-700-normal.woff2",
+        "package/files/atkinson-hyperlegible-latin-400-italic.woff2": "fonts/atkinson-latin-400-italic.woff2",
+        "package/files/atkinson-hyperlegible-latin-ext-400-normal.woff2": "fonts/atkinson-latin-ext-400-normal.woff2",
+        "package/files/atkinson-hyperlegible-latin-ext-700-normal.woff2": "fonts/atkinson-latin-ext-700-normal.woff2",
+        "package/files/atkinson-hyperlegible-latin-ext-400-italic.woff2": "fonts/atkinson-latin-ext-400-italic.woff2",
+        "package/LICENSE": "licenses/atkinson-hyperlegible-OFL"
+      }
+    },
+    {
+      "name": "bricolage-grotesque",
+      "url": "https://registry.npmjs.org/@fontsource-variable/bricolage-grotesque/-/bricolage-grotesque-5.1.0.tgz",
+      "hash": "sha512-9YiKURmSyEGvbMHCH6UBMP31JMNels5hJR/pIzBvo+mYtSvPCXSIP/VhT7T/4RG4vssXdvUR77eDuUvWSuyYwQ==",
+      "files": {
+        "package/files/bricolage-grotesque-latin-opsz-normal.woff2": "fonts/bricolage-latin-opsz.woff2",
+        "package/files/bricolage-grotesque-latin-ext-opsz-normal.woff2": "fonts/bricolage-latin-ext-opsz.woff2",
+        "package/LICENSE": "licenses/bricolage-grotesque-OFL"
+      }
+    }
+  ]
+}
