@@ -446,14 +446,15 @@ func TestTaskVersionsAppendOnly(t *testing.T) {
 	// Att redigera en gammal uppgift räknar inte in den igen; efter åtta dagar går det.
 	real := a.st.now
 	a.st.now = func() time.Time { return real().Add(8 * 24 * time.Hour) }
-	do(h, child, "PATCH", "/api/store/tasks/k2", `{"title":"ändrad"}`)
-	do(h, child, "PATCH", "/api/store/tasks/k3", `{"title":"ändrad"}`)
+	for _, k := range []string{"k1", "k2", "k3"} { // med updated_at hade alla tre räknats igen
+		do(h, child, "PATCH", "/api/store/tasks/"+k, `{"title":"ändrad"}`)
+	}
 	if w := do(h, child, "PUT", "/api/store/tasks/k4", `{"profileId":"p1","versions":[`+v(1)+`]}`); w.Code != 204 {
 		t.Fatalf("ny vecka: %d %s", w.Code, w.Body)
 	}
 	// Påhittad feedback (null eller inte ett objekt) nekas.
 	put("k5", "")
-	for _, fb := range []string{`null`, `"bra"`, `{}`} {
+	for _, fb := range []string{`null`, `"bra"`, `{}`, `{"x":null}`, `{"strength":""}`} {
 		if c := put("k5", `{"n":1,"feedback":`+fb+`}`); c != 400 {
 			t.Errorf("feedback %s: %d", fb, c)
 		}

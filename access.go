@@ -316,10 +316,12 @@ func (s *server) checkTaskVersions(r *http.Request, owner string, storedRaw json
 		return nil
 	}
 	var v struct {
-		Feedback map[string]json.RawMessage `json:"feedback"`
-		Blocked  bool                       `json:"blocked"`
+		Feedback *struct {
+			Strength string `json:"strength"`
+		} `json:"feedback"`
+		Blocked bool `json:"blocked"`
 	}
-	if json.Unmarshal(next[len(next)-1], &v) != nil || (len(v.Feedback) == 0 && !v.Blocked) {
+	if json.Unmarshal(next[len(next)-1], &v) != nil || !(v.Blocked || (v.Feedback != nil && strings.TrimSpace(v.Feedback.Strength) != "")) {
 		return errBadDoc
 	}
 	if len(stored) == 0 {
