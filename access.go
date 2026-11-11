@@ -251,6 +251,9 @@ func (s *server) restrictedTask(r *http.Request, p string, body []byte) ([]byte,
 				delete(in, k)
 			}
 		}
+		if err := s.checkTaskVersions(r, owner, stored["versions"], in); err != nil {
+			return nil, err
+		}
 	case errors.Is(err, errNotFound):
 		if r.Method != http.MethodPut {
 			return nil, errNotFound
@@ -270,10 +273,80 @@ func (s *server) restrictedTask(r *http.Request, p string, body []byte) ([]byte,
 		}
 		sup, _ := json.Marshal(pf.TaskSupport)
 		in["support"] = sup
+		if err := s.checkTaskVersions(r, owner, nil, in); err != nil {
+			return nil, err
+		}
 	default:
 		return nil, err
 	}
 	return json.Marshal(in)
+}
+
+const (
+	maxTaskRounds   = 3 // samma som MAX_ROUNDS i web/tasklogic.js
+	maxTasksPerWeek = 3 // samma som TASKS_PER_WEEK
+)
+
+// checkTaskVersions: versionerna är en logg som barnet bara får lägga till i, en åt
+// gången och högst maxTaskRounds; varje ny version har feedback eller är stoppad.
+// En första version på en ny uppgift räknas mot veckogränsen (serverns tid).
+func (s *server) checkTaskVersions(r *http.Request, owner string, storedRaw json.RawMessage, in map[string]json.RawMessage) error {
+	var stored, next []json.RawMessage
+	if len(storedRaw) > 0 && string(storedRaw) != "null" {
+		if json.Unmarshal(storedRaw, &stored) != nil {
+			return errBadDoc
+		}
+	}
+	if v, ok := in["versions"]; ok && string(v) != "null" {
+		if json.Unmarshal(v, &next) != nil {
+			return errBadDoc
+		}
+	} else if r.Method == http.MethodPatch {
+		return nil // versionerna rörs inte
+	}
+	if len(next) < len(stored) || len(next) > len(stored)+1 || len(next) > maxTaskRounds {
+		return errForbidden
+	}
+	for i := range stored {
+		if !jsonEqual(stored[i], next[i]) {
+			return errForbidden // tidigare versioner är förälderns insyn och ändras inte
+		}
+	}
+	if len(next) == len(stored) {
+		return nil
+	}
+	var v struct {
+		Feedback json.RawMessage `json:"feedback"`
+		Blocked  bool            `json:"blocked"`
+	}
+	if json.Unmarshal(next[len(next)-1], &v) != nil || (len(v.Feedback) == 0 && !v.Blocked) {
+		return errBadDoc
+	}
+	if len(stored) == 0 {
+		var n int
+		err := s.st.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM docs WHERE parent = 'tasks' AND path <> ?
+  AND json_extract(data, '$.profileId') = ? AND json_array_length(json_extract(data, '$.versions')) > 0 AND updated_at >= ?`,
+			r.PathValue("path"), owner, s.st.now().Add(-7*24*time.Hour).UnixMilli()).Scan(&n)
+		if err != nil {
+			return err
+		}
+		if n >= maxTasksPerWeek {
+			return errWeekLimit
+		}
+	}
+	return nil
+}
+
+var errWeekLimit = errors.New("Du har fått hjälp med tre uppgifter den här veckan. Nästa vecka kan du få hjälp igen.")
+
+func jsonEqual(a, b json.RawMessage) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	ja, _ := json.Marshal(x)
+	jb, _ := json.Marshal(y)
+	return string(ja) == string(jb)
 }
 
 // restrictedProfile: lägger bara barnets fält ovanpå den sparade profilen.
@@ -339,7 +412,7 @@ func validChildField(k string, v json.RawMessage) error {
 }
 
 func accessError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errForbidden) || errors.Is(err, errLocked) {
+	if errors.Is(err, errForbidden) || errors.Is(err, errLocked) || errors.Is(err, errWeekLimit) {
 		apiError(w, http.StatusForbidden, err.Error())
 		return
 	}

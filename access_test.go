@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -353,7 +354,7 @@ func TestTasks(t *testing.T) {
 	if !strings.Contains(b, `"support":3`) {
 		t.Fatalf("stödnivån ska komma från profilen: %s", b)
 	}
-	if w := do(h, child, "PUT", "/api/store/tasks/k1", `{"profileId":"p2","support":1,"title":"Vikingar","versions":[{"text":"a"}]}`); w.Code != 204 {
+	if w := do(h, child, "PUT", "/api/store/tasks/k1", `{"profileId":"p2","support":1,"title":"Vikingar","versions":[{"text":"a","feedback":{"strength":"Bra."}}]}`); w.Code != 204 {
 		t.Fatalf("uppdatera: %d %s", w.Code, w.Body)
 	}
 	b = do(h, child, "GET", "/api/store/tasks/k1", "").Body.String()
@@ -387,5 +388,54 @@ func TestTasks(t *testing.T) {
 	}
 	if w := doC(h, parent, "DELETE", "/api/store/tasks/k4", "", pc); w.Code != 204 {
 		t.Errorf("förälder raderar: %d", w.Code)
+	}
+}
+
+// Versionerna är en logg: barnet lägger till en i taget, med feedback, högst tre,
+// och ändrar aldrig tidigare. Veckogränsen gäller på servern.
+func TestTaskVersionsAppendOnly(t *testing.T) {
+	_, h := testServer(t)
+	seedFamily(t, h)
+	v := func(n int) string { return fmt.Sprintf(`{"n":%d,"text":"t%d","feedback":{"strength":"Bra."}}`, n, n) }
+	put := func(id, versions string) int {
+		return do(h, child, "PUT", "/api/store/tasks/"+id, `{"profileId":"p1","title":"x","versions":[`+versions+`]}`).Code
+	}
+	if c := put("k1", ""); c != 204 {
+		t.Fatalf("tom: %d", c)
+	}
+	if c := put("k1", v(1)); c != 204 {
+		t.Fatalf("första: %d", c)
+	}
+	for name, c := range map[string]int{
+		"töm loggen":         put("k1", ""),
+		"ändra version 1":    put("k1", `{"n":1,"text":"annan","feedback":{"strength":"Bra."}}`),
+		"två nya på en gång": put("k1", v(1)+","+v(2)+","+v(3)),
+		"utan feedback":      put("k1", v(1)+`,{"n":2,"text":"t2"}`),
+	} {
+		if c != 403 && c != 400 {
+			t.Errorf("%s: %d", name, c)
+		}
+	}
+	if c := put("k1", v(1)+","+v(2)); c != 204 {
+		t.Fatalf("andra: %d", c)
+	}
+	if c := put("k1", v(1)+","+v(2)+`,{"n":3,"text":"t3","blocked":true}`); c != 204 {
+		t.Fatalf("stoppad tredje: %d", c)
+	}
+	if c := put("k1", v(1)+","+v(2)+`,{"n":3,"text":"t3","blocked":true},`+v(4)); c != 403 {
+		t.Fatalf("fjärde omgången: %d", c)
+	}
+	// PATCH som tömmer versionerna nekas också.
+	if w := do(h, child, "PATCH", "/api/store/tasks/k1", `{"versions":[]}`); w.Code != 403 {
+		t.Fatalf("PATCH tömmer: %d", w.Code)
+	}
+	// Veckogränsen: k1 + två till med feedback, den fjärde nekas.
+	put("k2", "")
+	put("k2", v(1))
+	put("k3", "")
+	put("k3", v(1))
+	put("k4", "")
+	if w := do(h, child, "PUT", "/api/store/tasks/k4", `{"profileId":"p1","versions":[`+v(1)+`]}`); w.Code != 403 || !strings.Contains(w.Body.String(), "veckan") {
+		t.Fatalf("veckogränsen: %d %s", w.Code, w.Body)
 	}
 }

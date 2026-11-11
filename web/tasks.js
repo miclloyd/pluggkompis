@@ -127,7 +127,7 @@ export function TaskView({ env, go, profileId, taskId }) {
       <ol class="fb-questions">${last.feedback.questions.map(q => html`<li>${q.paragraph ? html`<span class="ref">Stycke ${q.paragraph}</span> ` : ''}${q.text}</li>`)}</ol>
       ${last.feedback.errors?.length > 0 && html`<p class="small">Läs högt för dig själv: ${last.feedback.errors.map(e => html`<span class="fix">stycke ${e.paragraph} (${e.type}) </span>`)}</p>`}
     </section>`}
-    ${last?.blocked && !editing && html`<p class="notice warn">Kompisen kunde inte ge frågor som följer reglerna den här gången. Försök igen lite senare, eller visa texten för en vuxen.</p>`}
+    ${last?.blocked && !editing && html`<p class="notice warn">Kompisen kunde inte ge frågor som följer reglerna den här gången. Omgången räknas ändå. Ändra något i texten och försök igen, eller visa texten för en vuxen.</p>`}
 
     ${!editing && paras.length > 0 && html`<section class="block">
       <h2>Din text</h2>
