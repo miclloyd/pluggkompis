@@ -54,6 +54,7 @@ test('diktamen rättas som skrivfråga', () => {
 test('diktamen skapas bara för diktabla glosor med känt språk och nivå 3 i banken', async () => {
   // speech.js importerar lib.js (Preact); en tom stub räcker för logiken.
   globalThis.window = { speechSynthesis: {}, SpeechSynthesisUtterance: function () {}, htmPreact: { html: () => null } };
+  try {
   const { withDictation } = await import('../web/speech.js');
   const lvl3 = [{ id: 'w', level: 3, kind: 'write' }];
   const goals = [
@@ -68,5 +69,7 @@ test('diktamen skapas bara för diktabla glosor med känt språk och nivå 3 i b
   assert.deepEqual(Object.keys(out).filter(k => out[k].some(i => i.kind === 'dictation')), ['a']);
   assert.equal(out.a.find(i => i.kind === 'dictation').lang, 'en');
   assert.equal(banks.a.length, 1, 'originalbanken ändras inte');
-  delete globalThis.window;
+  } finally {
+    delete globalThis.window;
+  }
 });

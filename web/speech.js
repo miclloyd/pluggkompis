@@ -8,7 +8,7 @@ export const canSpeak = () => typeof window !== 'undefined' && 'speechSynthesis'
 
 export function speak(text, lang = 'sv', rate = 0.9) {
   if (!canSpeak() || !text) return;
-  const tag = VOICE_LANG[lang] || lang;
+  const tag = VOICE_LANG[lang] || lang || 'sv-SE';
   const synth = window.speechSynthesis;
   synth.cancel();
   const u = new window.SpeechSynthesisUtterance(String(text));
