@@ -9,8 +9,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -26,12 +24,13 @@ import (
 	"tailscale.com/tsnet"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 // User: ett Tailscale-konto som får använda appen. Devices (stable ID) är
 // valfritt; anges det måste även enheten stämma. Det behövs för den förälder som
 // äger tjänstenoderna i tailnätet.
 type User struct {
+	ID      string   `json:"id"` // familjens id (lib/family.nix); kopplar barnkontot till profiler
 	Login   string   `json:"login"`
 	Name    string   `json:"name"`
 	Role    string   `json:"role"` // parent | child
@@ -42,7 +41,7 @@ type Config struct {
 	Users []User `json:"users"`
 }
 
-func loadConfig(path string) (map[string]User, error) {
+func loadConfig(path string) ([]User, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -51,14 +50,17 @@ func loadConfig(path string) (map[string]User, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return nil, err
 	}
-	users := map[string]User{}
+	seen := map[string]bool{}
 	for _, u := range c.Users {
-		if u.Login == "" || (u.Role != "parent" && u.Role != "child") {
-			return nil, fmt.Errorf("användare %q: login och roll (parent/child) krävs", u.Login)
+		if u.ID == "" || u.Login == "" || (u.Role != "parent" && u.Role != "child") {
+			return nil, fmt.Errorf("användare %q: id, login och roll (parent/child) krävs", u.Login)
 		}
-		users[u.Login] = u
+		if seen[u.ID] || seen["login:"+u.Login] {
+			return nil, fmt.Errorf("användare %q: id eller login finns två gånger", u.Login)
+		}
+		seen[u.ID], seen["login:"+u.Login] = true, true
 	}
-	return users, nil
+	return c.Users, nil
 }
 
 func main() {
@@ -70,6 +72,7 @@ func main() {
 	keyFile := flag.String("authkey-file", "", "Tailscale-nyckel (bara första inloggningen)")
 	dev := flag.String("dev", "", "lokal utveckling utan tsnet, t.ex. 127.0.0.1:8095")
 	demo := flag.Bool("demo", false, "fyll en tom databas med exempelprovet (examples/)")
+	devAs := flag.String("dev-as", "parent", "dev-identitetens roll: parent | child (barnet heter devbarn)")
 	flag.Parse()
 
 	index, err := serverIndex()
@@ -82,6 +85,10 @@ func main() {
 	}
 	defer st.Close()
 	ctx := context.Background()
+	auth, err := newAuth(st)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if *demo {
 		if empty, err := st.Empty(ctx); err != nil {
 			log.Fatal(err)
@@ -89,17 +96,17 @@ func main() {
 			if err := st.importBackup(ctx, demoBackup); err != nil {
 				log.Fatal(err)
 			}
-			// Föräldra-PIN 1234 i webbläsarens format (repo.js → hashPin).
-			sum := sha256.Sum256([]byte("demo:1234"))
-			pin := fmt.Sprintf(`{"salt":"demo","pinHash":%q}`, hex.EncodeToString(sum[:]))
-			if err := st.Set(ctx, "settings/parent", []byte(pin)); err != nil {
+			// Exempelbarnet kopplas till dev-barnet (-dev-as child).
+			if err := st.Update(ctx, "profiles/pdemo01", []byte(`{"account":"devbarn"}`)); err != nil {
+				log.Fatal(err)
+			}
+			if err := auth.setPIN(ctx, "1234"); err != nil {
 				log.Fatal(err)
 			}
 			log.Print("demoläge: exempelprovet inlagt, föräldra-PIN 1234")
 		}
 	}
-
-	a := &server{st: st, index: index}
+	a := &server{st: st, auth: auth, index: index}
 
 	if *dev != "" {
 		if *stateDir != "" {
@@ -109,9 +116,16 @@ func main() {
 		if host != "127.0.0.1" && host != "localhost" && host != "[::1]" {
 			log.Fatal("-dev lyssnar bara på loopback")
 		}
-		u := User{Login: "dev@local", Name: "Utvecklare", Role: "parent"}
-		a.users = map[string]User{u.Login: u}
-		a.who = devWho{who{login: u.Login, node: "dev"}}
+		users := []User{
+			{ID: "dev", Login: "dev@local", Name: "Förälder (dev)", Role: "parent"},
+			{ID: "devbarn", Login: "devbarn@local", Name: "Barn (dev)", Role: "child"},
+		}
+		a.setUsers(users)
+		me := users[0]
+		if *devAs == "child" {
+			me = users[1]
+		}
+		a.who = devWho{who{login: me.Login, node: "dev"}}
 		log.Printf("pluggkompis %s (dev): http://%s/", version, *dev)
 		srv := &http.Server{Addr: *dev, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 		log.Fatal(srv.ListenAndServe())
@@ -120,9 +134,11 @@ func main() {
 	if *stateDir == "" || *cfgPath == "" {
 		log.Fatal("-state och -config krävs (eller -dev för lokal utveckling)")
 	}
-	if a.users, err = loadConfig(*cfgPath); err != nil {
+	users, err := loadConfig(*cfgPath)
+	if err != nil {
 		log.Fatal(err)
 	}
+	a.setUsers(users)
 	var key string
 	if *keyFile != "" {
 		b, err := os.ReadFile(*keyFile)

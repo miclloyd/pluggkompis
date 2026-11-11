@@ -88,10 +88,20 @@ const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inl
 	"object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 
 type server struct {
-	st    *Store
-	who   whoer
-	users map[string]User // login → användare
-	index []byte
+	st       *Store
+	auth     *Auth
+	who      whoer
+	users    map[string]User // login → användare
+	userList []User          // i konfigurationens ordning
+	index    []byte
+}
+
+func (s *server) setUsers(list []User) {
+	s.userList = list
+	s.users = map[string]User{}
+	for _, u := range list {
+		s.users[u.Login] = u
+	}
 }
 
 func (a *server) routes() http.Handler {
@@ -108,6 +118,10 @@ func (a *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, clientConfig(false))
 	})
+	mux.HandleFunc("GET /api/auth", a.authStatus)
+	mux.HandleFunc("POST /api/auth/pin", a.authSetPIN)
+	mux.HandleFunc("POST /api/auth/unlock", a.authUnlock)
+	mux.HandleFunc("POST /api/auth/lock", a.authLock)
 	mux.HandleFunc("GET /api/store/{path...}", a.storeGet)
 	mux.HandleFunc("PUT /api/store/{path...}", a.storeSet)
 	mux.HandleFunc("PATCH /api/store/{path...}", a.storeUpdate)
@@ -118,7 +132,21 @@ func (a *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "finns inte")
 	})
-	return a.auth(headers(mux))
+	return a.identify(sameOrigin(headers(mux)))
+}
+
+// sameOrigin: skrivande anrop måste komma från appens egen sida (utöver
+// SameSite-kakan). Webbläsare skickar Origin på POST/PUT/PATCH/DELETE.
+func sameOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if o := r.Header.Get("Origin"); o != "" && o != "https://"+r.Host && o != "http://"+r.Host {
+				apiError(w, http.StatusForbidden, "fel ursprung")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // noDirs: inga kataloglistningar.
@@ -145,8 +173,8 @@ func headers(next http.Handler) http.Handler {
 	})
 }
 
-// auth: varje anrop måste komma från en känd login (WhoIs). Okänd = nej.
-func (a *server) auth(next http.Handler) http.Handler {
+// identify: varje anrop måste komma från en känd login (WhoIs). Okänd = nej.
+func (a *server) identify(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := a.who.whois(r.Context(), r.RemoteAddr)
 		if err != nil {
@@ -174,8 +202,15 @@ func (a *server) serveIndex(w http.ResponseWriter, r *http.Request) {
 
 func (a *server) storeGet(w http.ResponseWriter, r *http.Request) {
 	p := r.PathValue("path")
+	if err := a.canRead(r, p); err != nil {
+		accessError(w, err)
+		return
+	}
 	if r.URL.Query().Get("list") == "1" {
 		docs, err := a.st.List(r.Context(), p)
+		if err == nil {
+			docs, err = a.filterList(r, p, docs)
+		}
 		if err != nil {
 			storeError(w, err)
 			return
@@ -197,9 +232,9 @@ func (a *server) storeGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *server) storeSet(w http.ResponseWriter, r *http.Request) {
-	body, err := readBody(w, r, maxDocBytes)
+	body, err := a.writeBody(w, r)
 	if err != nil {
-		storeError(w, err)
+		accessError(w, err)
 		return
 	}
 	if err := a.st.Set(r.Context(), r.PathValue("path"), body); err != nil {
@@ -210,9 +245,9 @@ func (a *server) storeSet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *server) storeUpdate(w http.ResponseWriter, r *http.Request) {
-	body, err := readBody(w, r, maxDocBytes)
+	body, err := a.writeBody(w, r)
 	if err != nil {
-		storeError(w, err)
+		accessError(w, err)
 		return
 	}
 	if err := a.st.Update(r.Context(), r.PathValue("path"), body); err != nil {
@@ -222,7 +257,28 @@ func (a *server) storeUpdate(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// writeBody: behörighet + body; för barnets profilskrivning bara de tillåtna fälten.
+func (a *server) writeBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	p := r.PathValue("path")
+	if _, _, _, err := docPath(p); err != nil {
+		return nil, err
+	}
+	restrict, err := a.canWrite(r, p)
+	if err != nil {
+		return nil, err
+	}
+	body, err := readBody(w, r, maxDocBytes)
+	if err != nil || !restrict {
+		return body, err
+	}
+	return a.restrictedProfile(r.Context(), p, body)
+}
+
 func (a *server) storeDelete(w http.ResponseWriter, r *http.Request) {
+	if _, err := a.canWrite(r, r.PathValue("path")); err != nil {
+		accessError(w, err)
+		return
+	}
 	if err := a.st.Delete(r.Context(), r.PathValue("path")); err != nil {
 		storeError(w, err)
 		return
@@ -243,6 +299,10 @@ var fileTypes = map[string]bool{
 }
 
 func (a *server) filePut(w http.ResponseWriter, r *http.Request) {
+	if !a.parentMode(r) {
+		accessError(w, errForbidden)
+		return
+	}
 	body, err := readBody(w, r, maxFileBytes)
 	if err != nil {
 		storeError(w, err)
@@ -282,6 +342,10 @@ func (a *server) fileGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *server) fileDelete(w http.ResponseWriter, r *http.Request) {
+	if !a.parentMode(r) {
+		accessError(w, errForbidden)
+		return
+	}
 	if err := a.st.DeleteFile(r.Context(), r.PathValue("id")); err != nil {
 		storeError(w, err)
 		return

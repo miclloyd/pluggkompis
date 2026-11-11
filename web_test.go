@@ -28,33 +28,64 @@ func testServer(t *testing.T) (*server, http.Handler) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	st := testStore(t)
+	auth, err := newAuth(st)
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := &server{
-		st:    testStore(t),
+		st:    st,
+		auth:  auth,
 		index: index,
-		users: map[string]User{
-			"forälder@github": {Login: "forälder@github", Role: "parent", Devices: []string{"nTELEFON"}},
-			"barn@github":     {Login: "barn@github", Role: "child"},
-		},
 		who: mapWho{
 			"1.1.1.1:1": {login: "forälder@github", stableID: "nTELEFON"},
 			"1.1.1.2:1": {login: "forälder@github", stableID: "nSERVER"},
 			"1.1.1.3:1": {login: "barn@github", stableID: "nIPAD"},
 			"1.1.1.4:1": {login: "barn@github", stableID: "nX", tagged: true},
 			"1.1.1.5:1": {login: "okänd@github", stableID: "nY"},
+			"1.1.1.6:1": {login: "barn2@github", stableID: "nIPAD2"},
 		},
 	}
+	a.setUsers([]User{
+		{ID: "mamma", Login: "forälder@github", Name: "Förälder", Role: "parent", Devices: []string{"nTELEFON"}},
+		{ID: "barn1", Login: "barn@github", Name: "Barn ett", Role: "child"},
+		{ID: "barn2", Login: "barn2@github", Name: "Barn två", Role: "child"},
+	})
 	return a, a.routes()
 }
 
 func do(h http.Handler, from, method, url, body string) *httptest.ResponseRecorder {
+	return doC(h, from, method, url, body, nil)
+}
+
+func doC(h http.Handler, from, method, url, body string, c *http.Cookie) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, url, strings.NewReader(body))
 	r.RemoteAddr = from
+	if c != nil {
+		r.AddCookie(c)
+	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
 }
 
-const parent, child = "1.1.1.1:1", "1.1.1.3:1"
+const parent, child, child2 = "1.1.1.1:1", "1.1.1.3:1", "1.1.1.6:1"
+
+// unlock sätter PIN 1234 (om ingen finns) och returnerar föräldrakakan.
+func unlock(t *testing.T, h http.Handler) *http.Cookie {
+	t.Helper()
+	w := do(h, parent, "POST", "/api/auth/pin", `{"pin":"1234"}`)
+	if w.Code == 403 {
+		w = do(h, parent, "POST", "/api/auth/unlock", `{"pin":"1234"}`)
+	}
+	for _, c := range w.Result().Cookies() {
+		if c.Name == sessionCookie && c.Value != "" {
+			return c
+		}
+	}
+	t.Fatalf("ingen kaka: %d %s", w.Code, w.Body)
+	return nil
+}
 
 func TestIndexRewrite(t *testing.T) {
 	b, err := serverIndex()
@@ -125,6 +156,13 @@ func TestConfig(t *testing.T) {
 // Samma anrop som web/adapters/server.js gör.
 func TestStoreAPI(t *testing.T) {
 	_, h := testServer(t)
+	pc := unlock(t, h)
+	do := func(h http.Handler, from, method, url, body string) *httptest.ResponseRecorder {
+		if from == parent {
+			return doC(h, from, method, url, body, pc)
+		}
+		return doC(h, from, method, url, body, nil)
+	}
 	if w := do(h, parent, "GET", "/api/store/tests/t1", ""); w.Code != 200 || strings.TrimSpace(w.Body.String()) != "null" {
 		t.Fatalf("saknat dokument: %d %s", w.Code, w.Body)
 	}
@@ -134,7 +172,7 @@ func TestStoreAPI(t *testing.T) {
 	if w := do(h, parent, "PATCH", "/api/store/tests/t1", `{"status":"ready"}`); w.Code != 204 {
 		t.Fatalf("patch: %d", w.Code)
 	}
-	w := do(h, child, "GET", "/api/store/tests/t1", "")
+	w := do(h, parent, "GET", "/api/store/tests/t1", "")
 	if !strings.Contains(w.Body.String(), `"status":"ready"`) || !strings.Contains(w.Body.String(), `"id":"t1"`) {
 		t.Fatalf("get: %s", w.Body)
 	}
@@ -164,8 +202,10 @@ func TestStoreAPI(t *testing.T) {
 
 func TestFilesAPI(t *testing.T) {
 	_, h := testServer(t)
+	pc := unlock(t, h)
 	r := httptest.NewRequest("POST", "/api/files", strings.NewReader("%PDF-1.4 test"))
 	r.RemoteAddr = parent
+	r.AddCookie(pc)
 	r.Header.Set("Content-Type", "application/pdf")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -182,6 +222,7 @@ func TestFilesAPI(t *testing.T) {
 	// HTML förklädd som bild får aldrig visas inline från vår origin.
 	r = httptest.NewRequest("POST", "/api/files", strings.NewReader("<html><script>alert(1)</script>"))
 	r.RemoteAddr = parent
+	r.AddCookie(pc)
 	r.Header.Set("Content-Type", "text/html")
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, r)

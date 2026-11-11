@@ -41,10 +41,29 @@ export async function createServerAdapters(config) {
     return 'saved';
   };
 
+  const post = async (url, body) => {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body || {}),
+      credentials: 'same-origin',
+    });
+    const data = r.status === 204 ? {} : await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.message || `Serverfel ${r.status}`);
+    return data;
+  };
+
   return {
     config,
     ai,
     save,
+    // PIN och roll sköts av servern (auth.js beskriver gränssnittet).
+    auth: {
+      status: () => call('GET', '/api/auth'),
+      setPin: pin => post('/api/auth/pin', { pin }),
+      unlock: pin => post('/api/auth/unlock', { pin }),
+      lock: () => post('/api/auth/lock'),
+    },
     store: {
       get: path => call('GET', `/api/store/${path}`),
       set: (path, doc) => call('PUT', `/api/store/${path}`, doc),

@@ -1,6 +1,7 @@
 import { html, render, useState, useEffect, useRef, useMemo, useCallback } from './lib.js';
 import { loadEnvironment } from './env.js';
-import { createRepo, uid, hashPin } from './repo.js';
+import { createRepo, uid } from './repo.js';
+import { createLocalAuth } from './auth.js';
 import { readFile, fileKind } from './extract.js';
 import { summarize, relDay, pct } from './stats.js';
 import { coverVar, Ring, Stamp, AnswerTrail, IconBook, IconChat, IconMic } from './ui.js';
@@ -58,7 +59,7 @@ function App() {
   const [theme, setTheme] = useState(() => lsGet('pk.theme') || 'auto');
 
   useEffect(() => {
-    loadEnvironment().then(e => setEnv({ ...e, repo: createRepo(e.store) })).catch(e => setBootErr(errText(e)));
+    loadEnvironment().then(e => { const repo = createRepo(e.store); setEnv({ ...e, repo, auth: e.auth || createLocalAuth(repo) }); }).catch(e => setBootErr(errText(e)));
   }, []);
   useEffect(() => { applyTheme(theme); }, [theme]);
   // Barnets eget val gäller när barnet är inne i appen.
@@ -98,7 +99,7 @@ function App() {
       <div class="top-inner">
         <button class="wordmark" onClick=${() => go({ name: 'start' })} aria-label="Till startsidan">Pluggkompis</button>
         <span class="top-actions">
-          ${parentOk && html`<button class="btn ghost small" onClick=${() => { setParentOk(false); go({ name: 'start' }); }}>Lås föräldraläget</button>`}
+          ${parentOk && html`<button class="btn ghost small" onClick=${() => { setParentOk(false); env.auth.lock().catch(() => {}); go({ name: 'start' }); }}>Lås föräldraläget</button>`}
           <${ThemeButton} mode=${theme} onChange=${changeTheme} />
         </span>
       </div>
@@ -120,13 +121,21 @@ function EnvNotice({ config }) {
 
 function Start({ env, go }) {
   const [profiles, setProfiles] = useState(null);
-  const [settings, setSettings] = useState(undefined);
+  const [auth, setAuth] = useState(undefined);
   useEffect(() => {
     env.repo.listProfiles().then(setProfiles).catch(() => setProfiles([]));
-    env.repo.getSettings().then(setSettings).catch(() => setSettings(null));
+    env.auth.status().then(setAuth).catch(() => setAuth(null));
   }, []);
-  if (!profiles || settings === undefined) return html`<p class="muted">Laddar…</p>`;
-  if (!settings?.pinHash) return html`<${Onboarding} env=${env} go=${go} />`;
+  if (!profiles || auth === undefined) return html`<p class="muted">Laddar…</p>`;
+  const isChild = auth?.role === 'child';
+  if (!auth?.hasPin) {
+    return isChild
+      ? html`<section class="hero"><h1>Pluggkompis är inte igång än</h1><p class="lead">Be en förälder starta Pluggkompis först.</p></section>`
+      : html`<${Onboarding} env=${env} go=${go} />`;
+  }
+  if (isChild && !profiles.length) {
+    return html`<section class="hero"><h1>Hej!</h1><p class="lead">Ditt konto är inte kopplat till någon profil än. Be en förälder koppla det under Föräldraläge → Barn.</p></section>`;
+  }
 
   return html`
     <section class="hero">
@@ -141,7 +150,7 @@ function Start({ env, go }) {
           <span class="profile-grade">Årskurs ${p.grade}</span>
         </button>`)}
     </div>
-    <p class="center parent-link"><button class="btn ghost small" onClick=${() => go({ name: 'parent' })}>Förälder</button></p>`;
+    ${!isChild && html`<p class="center parent-link"><button class="btn ghost small" onClick=${() => go({ name: 'parent' })}>Förälder</button></p>`}`;
 }
 
 function Onboarding({ env, go }) {
@@ -157,8 +166,7 @@ function Onboarding({ env, go }) {
     if (!name.trim()) return setErr('Skriv barnets namn.');
     setBusy(true);
     try {
-      const salt = uid('s');
-      await env.repo.saveSettings({ salt, pinHash: await hashPin(pin, salt) });
+      await env.auth.setPin(pin);
       await env.repo.saveProfile({ id: uid('p'), name: name.trim(), grade: Number(grade), color: COLORS[0] });
       go({ name: 'start', t: Date.now() });
     } catch (x) { setErr(errText(x)); setBusy(false); }
@@ -191,9 +199,11 @@ function PinGate({ env, go, setParentOk, next }) {
   const [err, setErr] = useState('');
   async function submit(e) {
     e.preventDefault();
-    const s = await env.repo.getSettings();
-    if (s && (await hashPin(pin, s.salt)) === s.pinHash) { setParentOk(true); go(next); }
-    else { setErr('Fel PIN-kod.'); setPin(''); }
+    let r;
+    try { r = await env.auth.unlock(pin); } catch (x) { setErr(errText(x)); setPin(''); return; }
+    if (r.ok) { setParentOk(true); go(next); return; }
+    setErr(r.waitSeconds ? `Fel PIN-kod för många gånger. Vänta ${Math.ceil(r.waitSeconds / 60)} min och försök igen.` : 'Fel PIN-kod.');
+    setPin('');
   }
   return html`
     <form class="sheet form narrow" onSubmit=${submit}>
@@ -219,7 +229,9 @@ function ParentHome({ env, go }) {
   const [tests, setTests] = useState([]);
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [accounts, setAccounts] = useState(null);
   const load = async () => {
+    env.auth.status().then(s => setAccounts(s.accounts || null)).catch(() => {});
     const [p, t] = await Promise.all([env.repo.listProfiles(), env.repo.listTests()]);
     const withStats = await Promise.all(t.map(async x => (x.status === 'ready'
       ? { ...x, stats: summarize(await env.repo.listAttempts(x.id).catch(() => [])) }
@@ -258,13 +270,13 @@ function ParentHome({ env, go }) {
       <ul class="list">
         ${profiles.map(p => html`<li><button class="list-row" onClick=${() => setEditing(p)}>
           <span class="lr-main"><span class="avatar sm" style=${`--c:${p.color}`}>${p.name.slice(0, 1)}</span><strong>${p.name}</strong></span>
-          <span class="muted small">Årskurs ${p.grade}</span></button></li>`)}
+          <span class="muted small">Årskurs ${p.grade}${accounts && !p.account ? ' · inget konto' : ''}</span></button></li>`)}
       </ul>
-      ${editing && html`<${ProfileForm} env=${env} profile=${editing} onDone=${() => { setEditing(null); load(); }} />`}
+      ${editing && html`<${ProfileForm} env=${env} profile=${editing} accounts=${accounts} profiles=${profiles} onDone=${() => { setEditing(null); load(); }} />`}
     </section>`;
 }
 
-function ProfileForm({ env, profile, onDone }) {
+function ProfileForm({ env, profile, accounts, profiles = [], onDone }) {
   const [p, setP] = useState({ ...profile, schedule: { ...DEFAULT_SCHEDULE, ...(profile.schedule || {}) } });
   const sch = p.schedule;
   const setSch = patch => setP({ ...p, schedule: { ...sch, ...patch } });
@@ -284,6 +296,12 @@ function ProfileForm({ env, profile, onDone }) {
       <div><label for="pf-grade">Årskurs</label><select id="pf-grade" value=${p.grade} onChange=${e => setP({ ...p, grade: e.target.value })}>
         ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(g => html`<option value=${g}>${g}</option>`)}</select></div>
     </div>
+    ${accounts && html`<div><label for="pf-account">Barnets konto</label>
+      <select id="pf-account" value=${p.account || ''} onChange=${e => setP({ ...p, account: e.target.value || undefined })}>
+        <option value="">Inget (övar på en förälders enhet)</option>
+        ${accounts.map(a => html`<option value=${a.id} disabled=${profiles.some(x => x.id !== p.id && x.account === a.id)}>${a.name}</option>`)}
+      </select>
+      <p class="hint">Med ett konto ser barnet bara sina egna prov på sin egen enhet.</p></div>`}
     <div class="swatches" role="radiogroup" aria-label="Färg">
       ${COLORS.map(c => html`<button type="button" role="radio" aria-checked=${p.color === c} class=${'swatch' + (p.color === c ? ' on' : '')} style=${`--c:${c}`} onClick=${() => setP({ ...p, color: c })} aria-label="Färg"></button>`)}
     </div>
