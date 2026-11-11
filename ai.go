@@ -533,7 +533,7 @@ func (a *AI) stream(w http.ResponseWriter, ctx context.Context, bucket, tier, mo
 	flusher, _ := w.(http.Flusher)
 	enc := json.NewEncoder(w)
 	var in, out int
-	stop, status := "", "ok"
+	stop, status, finished := "", "ok", false
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	for sc.Scan() {
@@ -572,11 +572,15 @@ func (a *AI) stream(w http.ResponseWriter, ctx context.Context, bucket, tier, mo
 			}
 		case "message_delta":
 			stop, out = ev.Delta.StopReason, ev.Usage.Out
+		case "message_stop":
+			finished = true
 		case "error":
 			status = "upstream_error"
 		}
 	}
-	if err := sc.Err(); err != nil || status != "ok" {
+	// Utan message_stop är svaret halvt (avbruten anslutning): ett fel, inte ett färdigt svar.
+	// Taket räknades redan när anropet reserverades, så ett avbrott kringgår det inte.
+	if err := sc.Err(); err != nil || status != "ok" || !finished {
 		if ctx.Err() != nil {
 			status = "cancelled"
 		} else {

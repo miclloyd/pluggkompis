@@ -318,6 +318,7 @@ func TestAIStream(t *testing.T) {
 			`{"type":"content_block_delta","delta":{"type":"text_delta","text":"Zakat "}}`,
 			`{"type":"content_block_delta","delta":{"type":"text_delta","text":"är allmosan."}}`,
 			`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}`,
+			`{"type":"message_stop"}`,
 		} {
 			fmt.Fprintf(w, "event: x\ndata: %s\n\n", ev)
 		}
@@ -345,5 +346,39 @@ func TestAIStream(t *testing.T) {
 	w = aiCall(h, child, nil, map[string]any{"prompt": "x", "json": true, "stream": true, "purpose": "child", "profileId": "p1"})
 	if w.Header().Get("Content-Type") == "application/x-ndjson" {
 		t.Fatal("JSON-svar strömmades")
+	}
+}
+
+// Strömmen bryts eller ger ett fel: klienten får en error-rad, inte done.
+func TestAIStreamErrors(t *testing.T) {
+	a, h, _, _ := aiServer(t, Limits{ChildPerDay: 2})
+	events := [][]string{
+		{`{"type":"content_block_delta","delta":{"type":"text_delta","text":"Halv "}}`}, // ingen message_stop
+		{`{"type":"content_block_delta","delta":{"type":"text_delta","text":"x"}}`, `{"type":"error","error":{"type":"overloaded_error"}}`, `{"type":"message_stop"}`},
+	}
+	n := 0
+	sse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, ev := range events[n] {
+			fmt.Fprintf(w, "data: %s\n\n", ev)
+		}
+		n++
+	}))
+	defer sse.Close()
+	a.ai.url = sse.URL
+	req := map[string]any{"prompt": "x", "tier": "quick", "stream": true, "purpose": "child", "profileId": "p1"}
+	for i := 0; i < 2; i++ {
+		b := aiCall(h, child, nil, req).Body.String()
+		if !strings.Contains(b, `"error"`) || strings.Contains(b, `"done"`) {
+			t.Fatalf("fall %d: %s", i, b)
+		}
+	}
+	// Taket räknas även för strömmade (och avbrutna) anrop.
+	if w := aiCall(h, child, nil, req); w.Code != 429 {
+		t.Fatalf("taket med stream: %d %s", w.Code, w.Body)
+	}
+	var st string
+	a.st.db.QueryRow(`SELECT status FROM ai_log WHERE status <> 'limit' ORDER BY ts DESC LIMIT 1`).Scan(&st)
+	if st != "upstream_error" {
+		t.Fatalf("loggat: %q", st)
 	}
 }

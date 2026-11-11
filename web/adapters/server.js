@@ -56,7 +56,8 @@ export async function createServerAdapters(config) {
             if (ev.done) return { text, truncated: !!ev.truncated };
           }
         }
-        return { text };
+        // Strömmen tog slut utan done: svaret är inte helt.
+        throw Object.assign(new Error('Svaret avbröts. Försök igen.'), { code: 'upstream_error', partial: text });
       }
       return r.json(); // { text, truncated } eller { json }
     },
