@@ -21,6 +21,8 @@ export const eq = (a, b) => a.n === b.n && a.d === b.d;
 // Läser barnets svar: 7, −3, 0,5, 0.5, 1/2, 1 1/2, 50 %, 2,5 cm (med enheten). null om det inte är ett tal.
 export function parseAnswer(raw, unit = '') {
   let s = String(raw ?? '').trim().toLowerCase().replace(/[−–]/g, '-').replace(/\s+/g, ' ');
+  // Tusentalsmellanslag: 1 500 och 12 000,5 (men 1 1/2 är blandad form).
+  if (/^-?\d{1,3}( \d{3})+([.,]\d+)?( |%|$)/.test(s)) s = s.replace(/(\d) (?=\d{3}\b)/g, '$1');
   if (unit) s = s.replace(new RegExp(`\\s*${unit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'), '');
   s = s.replace(/^\+/, '');
   let percent = false;
@@ -212,9 +214,10 @@ const G = {
   avrundning: {
     label: 'Avrundning', gen(r, hard) {
       if (hard) {
-        const v = int(r, 1000, 99999) / 1000, to = pick(r, [1, 2]);
-        const p = 10 ** to, rv = Math.round(v * p);
-        return { q: `Avrunda ${show(frac(Math.round(v * 1000), 1000))} till ${to === 1 ? 'en decimal' : 'två decimaler'}.`, answer: frac(rv, p), decimalOnly: true,
+        // Heltal i tusendelar, aldrig flyttal (2,675 · 100 är 267,49999… i flyttal).
+        let x; do x = int(r, 1001, 99999); while (x % 10 === 0);
+        const to = pick(r, [1, 2]), p = 10 ** to, step = 1000 / p, rv = Math.floor((x + step / 2) / step);
+        return { q: `Avrunda ${show(frac(x, 1000))} till ${to === 1 ? 'en decimal' : 'två decimaler'}.`, answer: frac(rv, p), decimalOnly: true,
           steps: [`Titta på siffran efter ${to === 1 ? 'första' : 'andra'} decimalen.`, '0–4 avrundas nedåt, 5–9 uppåt.', `Svaret är ${show(frac(rv, p))}`],
           hints: ['Vilken siffra bestämmer om det blir uppåt eller nedåt?', '5 eller mer: uppåt.'] };
       }
@@ -270,7 +273,8 @@ export function checkMath(item, given) {
   const v = parseAnswer(given, item.unit);
   if (!v) return { score: 0, verdict: 'wrong', note: 'Skriv ett tal, till exempel 7, 0,5 eller 1/2.' };
   if (!eq(v, want)) return { score: 0, verdict: 'wrong' };
-  const s = String(given).trim();
+  const s = String(given).trim().replace(/[−–]/g, '-');
+  if (item.decimalOnly && /%/.test(s)) return { score: 0.5, verdict: 'almost', note: 'Rätt värde, men skriv det som ett decimaltal.' };
   if (item.exact === 'fraction' && want.d !== 1) {
     const m = s.match(/^\s*-?(\d+)\s*\/\s*(\d+)\s*$/);
     if (!m) return { score: 0.5, verdict: 'almost', note: 'Rätt värde, men skriv det som ett bråk.' };
@@ -282,8 +286,8 @@ export function checkMath(item, given) {
 
 // Frågebank för ett matematikmål: count uppgifter per nivå, samma frö ger samma bank.
 export function mathBank(goal, count = 8) {
+  if (!Object.hasOwn(G, String(goal.skill))) return [];
   const g = G[goal.skill];
-  if (!g) return [];
   const items = [];
   for (let level = 1; level <= 4; level++) {
     const r = rng(`${goal.id}:${goal.skill}:${level}`);

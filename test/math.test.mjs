@@ -7,7 +7,8 @@ const num = s => Number(String(s).replace('−', '-').replace(',', '.'));
 
 test('svar som barnet kan skriva', () => {
   const cases = [['7', 7], ['−3', -3], ['-3', -3], ['0,5', 0.5], ['0.5', 0.5], [',5', 0.5], ['1/2', 0.5], ['1 1/2', 1.5],
-    ['50 %', 0.5], ['50%', 0.5], ['2,5 cm', 2.5, 'cm'], ['+4', 4], ['3/0', null], ['abc', null], ['', null], ['1,2,3', null]];
+    ['50 %', 0.5], ['50%', 0.5], ['2,5 cm', 2.5, 'cm'], ['+4', 4], ['3/0', null], ['abc', null], ['', null], ['1,2,3', null],
+    ['1 500', 1500], ['12 000,5', 12000.5], ['1 500 cm', 1500, 'cm'], ['−1/2', -0.5]];
   for (const [s, want, unit] of cases) {
     const v = parseAnswer(s, unit);
     if (want === null) assert.equal(v, null, s);
@@ -47,7 +48,13 @@ function recompute(skill, q) {
       return (num(m[3]) - Number(m[2])) / a;
     }
     case 'avrundning': {
-      if (/decimal/.test(q)) { const k = /två/.test(q) ? 100 : 10; return Math.round(n[0] * k) / k; }
+      if (/decimal/.test(q)) {
+        // Med heltal ur siffrorna, inte flyttal: "2,675" → 2675 tusendelar.
+        const [i, d = ''] = q.match(/Avrunda (\d+(?:,\d+)?)/)[1].split(',');
+        const x = Number(i) * 1000 + Number(d.padEnd(3, '0'));
+        const step = /två/.test(q) ? 10 : 100;
+        return Math.floor((x + step / 2) / step) * step / 1000;
+      }
       const to = /tiotal/.test(q) ? 10 : 100; return Math.round(n[0] / to) * to;
     }
     case 'negativa-tal': {
@@ -141,4 +148,21 @@ test('frågebanken för matematik byggs utan AI', async () => {
   assert.deepEqual(r.short, []);
   assert.equal(saved.g1.length, 32);
   assert.ok(saved.g1.every(i => i.kind === 'math' && i.pv === 'math1'));
+});
+
+test('avrundning med kända flyttalsfällor', () => {
+  // 2,675 och 1,005 avrundas uppåt (flyttal ger 2,67 och 1,00).
+  for (let s = 0; s < 400; s++) for (const it of mathBank({ id: 'r' + s, skill: 'avrundning' }).filter(i => i.level === 4)) {
+    if (/Avrunda 2,675 till två/.test(it.q)) assert.equal(it.answerText, '2,68');
+    if (/Avrunda 1,005 till två/.test(it.q)) assert.equal(it.answerText, '1,01');
+    assert.match(it.q, /Avrunda \d+,\d{3} /, 'alltid tre decimaler i frågan');
+  }
+  const it = { answer: frac(268, 100), decimalOnly: true };
+  assert.equal(checkMath(it, '2,68').score, 1);
+  assert.equal(checkMath(it, '268 %').score, 0.5);
+  assert.equal(checkMath(it, '67/25').score, 0.5);
+});
+
+test('okänd eller prototyp-färdighet ger ingen bank', () => {
+  for (const skill of ['toString', 'constructor', '__proto__']) assert.deepEqual(mathBank({ id: 'x', skill }), []);
 });
