@@ -294,3 +294,13 @@ func TestUsage(t *testing.T) {
 		}
 	}
 }
+
+// Bara takstopp för en hink: summorna får inte bli NULL (500).
+func TestUsageOnlyLimited(t *testing.T) {
+	a, h, _, pc := aiServer(t, Limits{})
+	a.ai.logCall("child:p1:2026-11-11", "quick", "", "limit", 0, 0)
+	a.st.db.Exec(`UPDATE ai_log SET input_tokens = NULL, output_tokens = NULL`)
+	if w := doC(h, parent, "GET", "/api/usage", "", pc); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}

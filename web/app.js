@@ -135,6 +135,10 @@ function Start({ env, go }) {
     env.repo.listProfiles().then(setProfiles).catch(() => setProfiles([]));
     env.auth.status().then(setAuth).catch(() => setAuth(null));
   }, []);
+  // En känd barnenhet går direkt till sin profil (plan 1.6, fas 3).
+  useEffect(() => {
+    if (auth?.role === 'child' && auth.hasPin && profiles?.length === 1) go({ name: 'child', profileId: profiles[0].id });
+  }, [auth, profiles]);
   if (!profiles || auth === undefined) return html`<p class="muted">Laddar…</p>`;
   const isChild = auth?.role === 'child';
   if (!auth?.hasPin) {
@@ -142,11 +146,7 @@ function Start({ env, go }) {
       ? html`<section class="hero"><h1>Pluggkompis är inte igång än</h1><p class="lead">Be en förälder starta Pluggkompis först.</p></section>`
       : html`<${Onboarding} env=${env} go=${go} />`;
   }
-  // En känd barnenhet går direkt till sin profil (plan 1.6, fas 3).
-  if (isChild && profiles.length === 1) {
-    setTimeout(() => go({ name: 'child', profileId: profiles[0].id }), 0);
-    return html`<p class="muted">Laddar…</p>`;
-  }
+  if (isChild && profiles.length === 1) return html`<p class="muted">Laddar…</p>`;
   if (isChild && !profiles.length) {
     return html`<section class="hero"><h1>Hej!</h1><p class="lead">Ditt konto är inte kopplat till någon profil än. Be en förälder koppla det under Föräldraläge → Barn.</p></section>`;
   }

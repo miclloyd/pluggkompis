@@ -457,8 +457,8 @@ func (s *server) usage(w http.ResponseWriter, r *http.Request) {
 	}
 	since := s.ai.now().Add(-30 * 24 * time.Hour).UnixMilli()
 	rows, err := s.ai.db.QueryContext(r.Context(), `SELECT bucket,
-  SUM(status <> 'limit'), SUM(status NOT IN ('ok', 'limit')), SUM(status = 'limit'),
-  SUM(input_tokens), SUM(output_tokens)
+  COALESCE(SUM(status <> 'limit'), 0), COALESCE(SUM(status NOT IN ('ok', 'limit')), 0), COALESCE(SUM(status = 'limit'), 0),
+  COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
 FROM ai_log WHERE ts >= ? GROUP BY bucket ORDER BY bucket`, since)
 	if err != nil {
 		storeError(w, err)

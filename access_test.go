@@ -303,10 +303,10 @@ func TestChildGrade(t *testing.T) {
 		now     string
 		want    int
 	}{
-		{2015, 0, "2026-11-11", 5}, // planens exempel: född 2015 = åk 5 hösten 2026
-		{2015, 0, "2027-06-30", 5},
-		{2015, 0, "2027-07-01", 6}, // läsåret byts 1 juli
-		{2015, -1, "2026-11-11", 4},
+		{2012, 0, "2026-11-11", 8}, // född 2012 = åk 8 hösten 2026
+		{2012, 0, "2027-06-30", 8},
+		{2012, 0, "2027-07-01", 9}, // läsåret byts 1 juli
+		{2012, -1, "2026-11-11", 7},
 		{2025, 0, "2026-11-11", 0},
 	} {
 		if g := childGrade(c.by, c.off, at(c.now)); g != c.want {
@@ -318,19 +318,19 @@ func TestChildGrade(t *testing.T) {
 func TestChildNeverSeesBirthYear(t *testing.T) {
 	_, h := testServer(t)
 	pc := seedFamily(t, h)
-	doC(h, parent, "PATCH", "/api/store/profiles/p1", `{"birthYear":2015,"birthMonth":4,"gradeOffset":0}`, pc)
+	doC(h, parent, "PATCH", "/api/store/profiles/p1", `{"birthYear":2012,"birthMonth":4,"gradeOffset":0}`, pc)
 	for _, url := range []string{"/api/store/profiles/p1", "/api/store/profiles?list=1"} {
 		b := do(h, child, "GET", url, "").Body.String()
 		if strings.Contains(b, "birth") || strings.Contains(b, "gradeOffset") || !strings.Contains(b, `"grade":`) {
 			t.Errorf("%s: %s", url, b)
 		}
 	}
-	if b := do(h, parent, "GET", "/api/store/profiles/p1", "").Body.String(); !strings.Contains(b, `"birthYear":2015`) {
+	if b := do(h, parent, "GET", "/api/store/profiles/p1", "").Body.String(); !strings.Contains(b, `"birthYear":2012`) {
 		t.Errorf("föräldern: %s", b)
 	}
 	// Barnets temabyte (hela profilen skickas) får inte radera födelseåret.
 	do(h, child, "PUT", "/api/store/profiles/p1", `{"name":"Ett","grade":5,"theme":"dark"}`)
-	if b := do(h, parent, "GET", "/api/store/profiles/p1", "").Body.String(); !strings.Contains(b, `"birthYear":2015`) || !strings.Contains(b, `"theme":"dark"`) {
+	if b := do(h, parent, "GET", "/api/store/profiles/p1", "").Body.String(); !strings.Contains(b, `"birthYear":2012`) || !strings.Contains(b, `"theme":"dark"`) {
 		t.Errorf("efter barnets temabyte: %s", b)
 	}
 }

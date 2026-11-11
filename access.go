@@ -270,8 +270,8 @@ func childGrade(birthYear, offset int, now time.Time) int {
 // årskursen som räknas fram ur dem.
 func childProfileView(raw json.RawMessage, now time.Time) json.RawMessage {
 	var m map[string]json.RawMessage
-	if json.Unmarshal(raw, &m) != nil {
-		return raw
+	if json.Unmarshal(raw, &m) != nil || m == nil {
+		return json.RawMessage(`{}`) // aldrig rådokumentet (fail-closed)
 	}
 	var by, off int
 	if json.Unmarshal(m["birthYear"], &by) == nil && by > 0 {
@@ -284,15 +284,17 @@ func childProfileView(raw json.RawMessage, now time.Time) json.RawMessage {
 	delete(m, "gradeOffset")
 	out, err := json.Marshal(m)
 	if err != nil {
-		return raw
+		return json.RawMessage(`{}`)
 	}
 	return out
 }
 
 // forChild: profiler som barnet läser går genom childProfileView.
 func (s *server) forChild(r *http.Request, p string, docs ...json.RawMessage) {
-	sg := segs(p)
-	if currentUser(r).Role != "child" || sg[0] != "profiles" {
+	if currentUser(r).Role != "child" {
+		return
+	}
+	if sg := segs(p); len(sg) == 0 || sg[0] != "profiles" {
 		return
 	}
 	for i := range docs {
