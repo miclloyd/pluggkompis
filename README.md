@@ -2,7 +2,7 @@
 
 Instuderingsapp för barn: föräldern laddar upp skolmaterial, AI:n tar fram lärandemål och frågor, och barnet övar
 med nivåer som anpassar sig. Plan 1.6; fas 1–2 byggdes som artifact på claude.ai (v15), fas 3 körs här som egen
-tjänst på hemservern.
+tjänst på egen server.
 
 - `web/` – frontenden från artifact v15 (Preact + htm som ES-moduler, ingen byggprocess); ändringar sedan dess syns i historiken
 - `*.go` – backenden: lagring (`/api/store`), filer (`/api/files`), föräldraläge och roller (`/api/auth`), `/api/config`, tsnet och WhoIs
@@ -27,9 +27,9 @@ go run . -dev 127.0.0.1:8095 -demo -db /tmp/pk.db   # demoläge, föräldra-PIN 
 
 ## Drift
 
-Tjänsten slås på i nixos-config (`modules/nixos/server/pluggkompis.nix`), som har repot som flake-input låst på en
-commit. Ny version i drift = uppdatera låsningen där. Nätet är en egen tailnet-nod (`tag:pluggkompis`) med HTTPS från
-Tailscale; varje anrop kontrolleras med WhoIs mot listan över familjens konton, och okända konton nekas.
+Flaken exporterar paketet (`packages.default`). Driften (NixOS-modul, nycklar, användarlista) ligger utanför det här
+repot och låser repot som flake-input på en commit. Nätet är en egen Tailscale-nod (tsnet) med HTTPS från Tailscale;
+varje anrop kontrolleras med WhoIs mot en konfigurerad användarlista, och okända konton nekas.
 
 ## Roller
 

@@ -13,6 +13,6 @@ jobs:
           fetch-depth: 0
       - uses: cachix/install-nix-action@v31
       # Publikt repo: inget personligt och inga nycklar, i hela historiken.
-      - run: ./dev/check-public.sh
+      - run: ./dev/check-public.sh --history
       - run: nix run nixpkgs#gitleaks -- git --redact --no-banner .
       - run: nix build -L .#default .#checks.x86_64-linux.js
