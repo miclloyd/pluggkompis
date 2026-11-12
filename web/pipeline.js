@@ -241,5 +241,7 @@ export async function reviewGoalItems({ ai, test, goal, banks, materials, review
   const errors = [];
   const { fynd, unreviewed } = await reviewItems({ ai, test, batches: [[goal]], banks, usable, total: 1, errors });
   return { ...review, fynd: [...(review.fynd || []).filter(f => f.goalId !== goal.id), ...fynd],
-    unreviewed: [...(review.unreviewed || []).filter(id => id !== goal.id), ...unreviewed], errors: [...(review.errors || []), ...errors] };
+    unreviewed: [...(review.unreviewed || []).filter(id => id !== goal.id), ...unreviewed], errors: [...(review.errors || []), ...errors],
+    // Ett gammalt "tittat själv" får inte dölja att den nya granskningen av målet misslyckades.
+    decisions: Object.fromEntries(Object.entries(review.decisions || {}).filter(([k]) => k !== 'u:' + goal.id)) };
 }

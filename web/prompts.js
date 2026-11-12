@@ -670,7 +670,7 @@ Kontrollera varje fråga mot underlaget:
 - ingen-grund: frågan ber om en förklaring eller ett skäl som underlaget inte ger, så barnet kan bara gissa.
 - oklar: frågan går att förstå på flera sätt.
 - dubblett: samma fråga, med samma svar, finns redan för något av målen. Flagga bara den senare av de två och skriv den andras id i vad.
-Bildtexter och kartor i underlaget räknas som underlag. Är du osäker, flagga inte: föräldern tar bort frågor du flaggar.
+Bildtexter och kartor i underlaget räknas som underlag. Flagga bara när du kan peka på vad i underlaget (eller vad som saknas där) som visar problemet; föräldern beslutar sedan om frågan.
 
 Svara endast med JSON och bara med frågor som har problem (tom lista om allt är bra):
 {"fynd":[{"id":"<frågans id>","problem":"saknar-stöd|fel-svar|flera-rätt|ingen-grund|oklar|dubblett","vad":"<en mening: vad som är fel och vad underlaget säger>"}]}`;

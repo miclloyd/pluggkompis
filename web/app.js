@@ -661,7 +661,7 @@ function TestSetup({ env, go, testId }) {
       await repo.saveGoal(testId, { ...goal, pending: false });
       if ([...r.short, ...r2.short].length) setInfo(`Färre frågor än vanligt för: ${goal.text}.`);
       // Granskat prov: det nya målets frågor granskas också (annars når de barnet ogranskade).
-      const cur = await repo.getTest(testId).catch(() => null);
+      const cur = await repo.getTest(testId).catch(() => test); // ett läsfel får inte hoppa över granskningen
       if (cur?.review) {
         // Ett fel här tar inte bort målet: frågorna finns, och målet blir "kunde inte granskas".
         setBusy('Granskar frågorna för målet');
@@ -1162,7 +1162,7 @@ function ReviewPanel({ test, goals, banks, busy, onReview, onDecide, onRemoveIte
       </li>`)}</ul>`}
       ${covered.length > 0 && html`<details class="small"><summary>Täckta krav</summary><ul>${covered.map(k => html`<li>${k.krav}</li>`)}</ul></details>`}
       <h4>Frågorna</h4>
-      ${unrev.length > 0 && html`<div class="notice warn small"><p>Frågorna för ${unrev.length} ${unrev.length === 1 ? 'mål' : 'mål'} kunde inte granskas: ${unrev.map(goalText).join('; ')}. Granska igen, eller titta själv.</p>
+      ${unrev.length > 0 && html`<div class="notice warn small"><p>Frågorna för ${unrev.length} mål kunde inte granskas: ${unrev.map(goalText).join('; ')}. Granska igen, eller titta själv.</p>
         <div class="actions left"><button class="btn ghost small" disabled=${busy} onClick=${() => onDecide(unrev.map(id => 'u:' + id), 'tittat')}>Jag har tittat själv</button></div></div>`}
       <p class="small">${flags.length ? `${flags.length} ${flags.length === 1 ? 'fråga har' : 'frågor har'} anmärkningar:` : 'Inga anmärkningar på frågorna.'}</p>
       ${flags.length > 0 && html`<ul class="review-list">${flags.map(f => { const it = item(f); return html`<li class=${dec['f:' + f.id] ? 'done' : ''}>
