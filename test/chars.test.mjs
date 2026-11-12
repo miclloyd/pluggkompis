@@ -27,6 +27,7 @@ test('språket som namn eller regionkod', () => {
   assert.deepEqual(charsForLangs('sv-ES'), SPECIAL.es);
   assert.deepEqual(charsForLangs('es-ES'), SPECIAL.es);
   assert.deepEqual(charsForLangs('svenska, tyska'), SPECIAL.de);
+  assert.deepEqual(charsForLangs('swedish-spanish'), SPECIAL.es);
 });
 
 test('infogning vid markören och över en markering', () => {

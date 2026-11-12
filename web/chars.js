@@ -17,7 +17,9 @@ export const SPECIAL = {
 
 // Språket kan stå som kod (sv-es, es-ES) eller namn (svenska-spanska).
 const NAMES = { svenska: 'sv', spanska: 'es', franska: 'fr', tyska: 'de', italienska: 'it', portugisiska: 'pt',
-  norska: 'no', danska: 'da', isländska: 'is', polska: 'pl', engelska: 'en', finska: 'fi' };
+  norska: 'no', danska: 'da', isländska: 'is', polska: 'pl', engelska: 'en', finska: 'fi',
+  swedish: 'sv', spanish: 'es', french: 'fr', german: 'de', italian: 'it', portuguese: 'pt', norwegian: 'no',
+  danish: 'da', icelandic: 'is', polish: 'pl', english: 'en', finnish: 'fi' };
 const code = w => NAMES[w] || w.slice(0, 2);
 
 // "sv-es" → tecknen för de språk i paret som inte är svenska.
@@ -54,8 +56,9 @@ export function CharBar({ chars, inputRef, value, onChange }) {
   const put = c => {
     const el = inputRef.current;
     const r = insertAt(value, el?.selectionStart, el?.selectionEnd, upper ? upperOf(c) : c);
+    el?.focus(); // direkt i trycket: iOS fäller annars ned tangentbordet
     onChange(r.value);
-    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(r.caret, r.caret); });
+    requestAnimationFrame(() => el?.setSelectionRange(r.caret, r.caret));
   };
   const keep = e => e.preventDefault(); // tryck tar inte fokus från svarsfältet
   return html`<div class="char-bar" role="group" aria-label="Specialtecken">
