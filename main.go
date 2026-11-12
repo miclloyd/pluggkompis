@@ -25,7 +25,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-var version = "0.12.0"
+var version = "0.12.1"
 
 // User: ett Tailscale-konto som får använda appen. Devices (stable ID) är
 // valfritt; anges det måste även enheten stämma. Det behövs för den förälder som
@@ -53,15 +53,36 @@ func loadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return c, err
 	}
-	seen := map[string]bool{}
+	// Samma konto får förekomma flera gånger bara om varje post är låst till egna enheter
+	// (t.ex. ett testkonto i barnroll för en viss enhet hos en förälder).
+	seenID := map[string]bool{}
+	byLogin := map[string][]User{}
 	for _, u := range c.Users {
 		if u.ID == "" || u.Login == "" || (u.Role != "parent" && u.Role != "child") {
 			return c, fmt.Errorf("användare %q: id, login och roll (parent/child) krävs", u.Login)
 		}
-		if seen[u.ID] || seen["login:"+u.Login] {
-			return c, fmt.Errorf("användare %q: id eller login finns två gånger", u.Login)
+		if seenID[u.ID] {
+			return c, fmt.Errorf("användare %q: id %q finns två gånger", u.Login, u.ID)
 		}
-		seen[u.ID], seen["login:"+u.Login] = true, true
+		seenID[u.ID] = true
+		byLogin[u.Login] = append(byLogin[u.Login], u)
+	}
+	for login, us := range byLogin {
+		if len(us) < 2 {
+			continue
+		}
+		devs := map[string]bool{}
+		for _, u := range us {
+			if len(u.Devices) == 0 {
+				return c, fmt.Errorf("konto %q finns flera gånger: varje post måste ha egna enheter", login)
+			}
+			for _, d := range u.Devices {
+				if devs[d] {
+					return c, fmt.Errorf("konto %q: enheten %q finns i flera poster", login, d)
+				}
+				devs[d] = true
+			}
+		}
 	}
 	return c, nil
 }

@@ -92,8 +92,8 @@ type server struct {
 	auth     *Auth
 	ai       *AI // nil = ingen nyckel
 	who      whoer
-	users    map[string]User // login → användare
-	userList []User          // i konfigurationens ordning
+	users    map[string][]User // login → användare (flera bara med egna enheter)
+	userList []User            // i konfigurationens ordning
 	index    []byte
 	host     string        // tailnet-namnet (fqdn); tomt = dev, http på loopback
 	heavy    chan struct{} // samtidiga tunga anrop (filer, AI)
@@ -101,9 +101,9 @@ type server struct {
 
 func (s *server) setUsers(list []User) {
 	s.userList = list
-	s.users = map[string]User{}
+	s.users = map[string][]User{}
 	for _, u := range list {
-		s.users[u.Login] = u
+		s.users[u.Login] = append(s.users[u.Login], u)
 	}
 }
 
@@ -232,8 +232,15 @@ func (a *server) identify(next http.Handler) http.Handler {
 			http.Error(w, "Okänd enhet", http.StatusForbidden)
 			return
 		}
-		u, ok := a.users[id.login]
-		if !ok || !u.allowed(id) {
+		var u User
+		ok := false
+		for _, c := range a.users[id.login] {
+			if c.allowed(id) {
+				u, ok = c, true
+				break
+			}
+		}
+		if !ok {
 			log.Printf("nekad: login %q nod %q", id.login, id.node)
 			http.Error(w, "Det här kontot har inte tillgång till Pluggkompis.", http.StatusForbidden)
 			return

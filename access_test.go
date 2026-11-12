@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -478,6 +480,56 @@ func TestTaskVersionsAppendOnly(t *testing.T) {
 	for _, fb := range []string{`null`, `"bra"`, `{}`, `{"x":null}`, `{"strength":""}`} {
 		if c := put("k5", `{"n":1,"feedback":`+fb+`}`); c != 400 {
 			t.Errorf("feedback %s: %d", fb, c)
+		}
+	}
+}
+
+// Ett testkonto i barnroll på förälderns workstation: samma login, egen enhet.
+func TestDeviceScopedTestAccount(t *testing.T) {
+	a, h := testServer(t)
+	a.setUsers([]User{
+		{ID: "mamma", Login: "forälder@github", Role: "parent", Devices: []string{"nTELEFON"}},
+		{ID: "test", Login: "forälder@github", Role: "child", Devices: []string{"nSERVER"}}, // 1.1.1.2 = "workstation"
+		{ID: "barn1", Login: "barn@github", Role: "child"},
+		{ID: "barn2", Login: "barn2@github", Role: "child"},
+	})
+	pc := seedFamily(t, h)
+	doC(h, parent, "PUT", "/api/store/profiles/pt", `{"name":"Test","grade":5,"account":"test"}`, pc)
+	ws := "1.1.1.2:1"
+	if got := ids(t, do(h, ws, "GET", "/api/store/profiles?list=1", "").Body.String()); got != "pt" {
+		t.Fatalf("workstationen ser: %q", got)
+	}
+	for _, p := range []string{"profiles/p1", "tests/t1", "tests/t2/attempts?list=1"} {
+		if w := do(h, ws, "GET", "/api/store/"+p, ""); w.Code != 403 {
+			t.Errorf("workstationen läser %s: %d", p, w.Code)
+		}
+	}
+	if w := do(h, ws, "POST", "/api/auth/unlock", `{"pin":"1234"}`); w.Code != 403 {
+		t.Errorf("workstationen låser upp föräldraläget: %d", w.Code)
+	}
+	// Telefonen är fortfarande förälder.
+	if got := ids(t, do(h, parent, "GET", "/api/store/profiles?list=1", "").Body.String()); got != "p1,p2,p3,pt" {
+		t.Errorf("telefonen ser: %q", got)
+	}
+}
+
+func TestConfigSharedLogin(t *testing.T) {
+	write := func(js string) string {
+		p := filepath.Join(t.TempDir(), "c.json")
+		os.WriteFile(p, []byte(js), 0o600)
+		return p
+	}
+	ok := `{"users":[{"id":"a","login":"x@g","role":"parent","devices":["n1"]},{"id":"b","login":"x@g","role":"child","devices":["n2"]}]}`
+	if _, err := loadConfig(write(ok)); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{
+		`{"users":[{"id":"a","login":"x@g","role":"parent"},{"id":"b","login":"x@g","role":"child","devices":["n2"]}]}`,
+		`{"users":[{"id":"a","login":"x@g","role":"parent","devices":["n1"]},{"id":"b","login":"x@g","role":"child","devices":["n1"]}]}`,
+		`{"users":[{"id":"a","login":"x@g","role":"parent","devices":["n1"]},{"id":"a","login":"y@g","role":"child"}]}`,
+	} {
+		if _, err := loadConfig(write(bad)); err == nil {
+			t.Errorf("borde nekas: %s", bad)
 		}
 	}
 }
