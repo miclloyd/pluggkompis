@@ -194,7 +194,7 @@ export function ParentTasks({ env, profiles }) {
     ${open && html`<${Sheet} title=${open.title || 'Uppgift'} wide onClose=${() => setOpen(null)}>
       <p class="small"><strong>Uppgiften:</strong> ${open.assignment}</p>
       ${open.rubric && html`<p class="small"><strong>Matris:</strong> ${open.rubric}</p>`}
-      ${env.ai && !feedbackVersions(open).length && html`<${PhotoReader} env=${env} task=${open} onSaved=${async t => { setOpen(t); load(); }} />`}
+      ${env.ai && !(open.versions || []).length && html`<${PhotoReader} env=${env} task=${open} onSaved=${async t => { setOpen(t); load(); }} />`}
       ${(open.versions || []).map(v => html`<section class="block">
         <h3>Version ${v.n}${v.ts ? ` · ${new Date(v.ts).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' })}` : ''}</h3>
         ${v.comment && html`<p class="small"><strong>Barnets kommentar:</strong> ${v.comment}</p>`}
@@ -232,10 +232,13 @@ function PhotoReader({ env, task, onSaved }) {
     } catch (e) { setErr(e.message || 'Avläsningen misslyckades.'); }
     finally { env.ai.setScope?.({}); setBusy(''); }
   }
+  useEffect(() => () => previews.forEach(u => URL.revokeObjectURL(u)), [previews]);
   async function save() {
-    const t = { ...task, draft: text.trim(), draftFromPhoto: true };
-    await env.repo.saveTask(t);
-    onSaved(await env.repo.getTask(task.id));
+    setErr('');
+    try {
+      await env.repo.saveTask({ ...task, draft: text.trim(), draftFromPhoto: true });
+      onSaved(await env.repo.getTask(task.id));
+    } catch (e) { setErr(e.message || 'Texten kunde inte sparas.'); }
   }
   return html`<section class="block">
     <h3>Barnets handskrivna text</h3>

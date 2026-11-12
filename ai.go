@@ -456,7 +456,7 @@ func readImages(files []*multipart.FileHeader) ([]image, *aiError) {
 // ── /api/usage: förbrukningen för föräldraläget ──────────────────────────────
 
 type usageRow struct {
-	Kind      string `json:"kind"` // child | build
+	Kind      string `json:"kind"` // child | build | task
 	ProfileID string `json:"profileId,omitempty"`
 	TestID    string `json:"testId,omitempty"`
 	TaskID    string `json:"taskId,omitempty"`
