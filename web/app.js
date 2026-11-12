@@ -1530,16 +1530,24 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
   const ref = useRef();
   const cw = goal && needsCoverWrite(item, goal, result);
   const [skipped, setSkipped] = useState(false);
-  const blocked = cw && !result.copied && !skipped;
-  useEffect(() => { if (!cw) { ref.current?.focus(); ref.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } }, []);
-  useEffect(() => { if (cw && (result.copied || skipped)) ref.current?.focus(); }, [!!result.copied, skipped]);
   const free = isFree(item);
   const title = { right: 'Rätt!', almost: free ? 'Delvis rätt' : 'Nästan rätt', wrong: 'Inte riktigt' }[result.verdict];
+  // Det barnet ska läsa (och kan få uppläst): rubriken, kommentaren, rätt svar och förklaringen.
+  const readText = [title, result.note, free && result.feedback,
+    result.verdict !== 'right' && (free ? (!item.moves && `Exempel på bra svar: ${item.answer}`) : `Rätt svar: ${correctAnswerText(item)}`),
+    item.explain].filter(Boolean).join(' ');
+  // Nästa kommer först efter en stund, så att kommentaren hinns läsa (cirka tre ord i sekunden, 2–8 s).
+  const [ready, setReady] = useState(false);
+  const readMs = Math.min(8000, Math.max(2000, readText.split(/\s+/).length * 330));
+  useEffect(() => { const t = setTimeout(() => setReady(true), readMs); return () => clearTimeout(t); }, []);
+  const blocked = cw && !result.copied && !skipped;
+  useEffect(() => { if (!cw) ref.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, []);
+  useEffect(() => { if (ready && (!cw || result.copied || skipped)) ref.current?.focus(); }, [ready, !!result.copied, skipped]);
   const icon = { right: '✓', almost: '½', wrong: '→' }[result.verdict];
   const stamp = result.event === 'up' || result.event === 'fast' ? `Nivå ${result.mastery?.level}!` : result.event === 'mastered' ? 'Klart!' : null;
   return html`<section class=${'feedback ' + result.verdict} aria-live="polite">
     ${stamp && html`<${Stamp}>${stamp}<//>`}
-    <h2><span class="fb-icon" aria-hidden="true">${icon}</span>${title}</h2>
+    <div class="fb-head"><h2><span class="fb-icon" aria-hidden="true">${icon}</span>${title}</h2><${SpeakButton} text=${readText} label="Läs upp" /></div>
     ${result.recheck === 'up' && html`<p class="levelup">Svaret kontrollerades en gång till, och du hade mer rätt än först.</p>`}
     ${result.note && html`<p>${result.note}</p>`}
     ${free && result.feedback && html`<p>${result.feedback}</p>`}
@@ -1571,7 +1579,7 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
           ? result.recheck !== 'up' && html`<span class="small muted">${result.recheck === 'same' ? 'Rättningen stod sig. ' : ''}Förälder får titta på det.</span>`
           : item.kind !== 'math' && html`<button class="btn ghost small" onClick=${onDispute}>Jag tycker jag hade rätt</button>`)}
       ${blocked && html`<button class="link small" onClick=${() => setSkipped(true)}>Hoppa över övningen</button>`}
-      <button ref=${ref} class="btn primary" disabled=${!!result.rechecking || blocked} onClick=${onNext}>Nästa</button>
+      <button ref=${ref} class=${'btn primary' + (ready ? '' : ' wait')} style=${`--wait: ${readMs}ms`} disabled=${!!result.rechecking || blocked || !ready} onClick=${onNext}>Nästa</button>
     </div>
   </section>`;
 }
