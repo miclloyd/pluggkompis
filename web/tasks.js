@@ -229,6 +229,7 @@ function PhotoReader({ env, task, onSaved }) {
       const t = cleanTranscript(r.text);
       if (!t) throw new Error('Ingen text hittades på bilden.');
       setText(t);
+      if (String(r.text).trim().length > MAX_TEXT) setErr(`Texten var längre än ${MAX_TEXT} tecken och har kortats. Kontrollera slutet.`);
     } catch (e) { setErr(e.message || 'Avläsningen misslyckades.'); }
     finally { env.ai.setScope?.({}); setBusy(''); }
   }
