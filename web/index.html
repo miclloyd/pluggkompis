@@ -667,11 +667,11 @@ body.sheet-open { overflow: hidden; }
   .profile:hover { transform: translateY(-2px); border-color: var(--c); }
   .list-row:hover { border-color: var(--pen); }
   .drop:hover { border-color: var(--pen); background: var(--pen-soft); }
-  .tab:hover { color: var(--ink); }
+  .tab:not(.on):hover { color: var(--ink); }
   .cover:hover .cover-front { transform: translateY(-3px) rotate(-0.6deg); }
   .option:hover:not(:disabled) { border-color: var(--pen); background: var(--pen-soft); }
   .tool:hover { border-color: var(--pen); color: var(--pen); }
-  .tm-opt:hover { border-color: var(--pen); }
+  .tm-opt:not(.main):hover { border-color: var(--pen); }
   .chip-btn:hover:not(:disabled) { border-color: var(--pen); color: var(--pen); }
   .m-item:hover:not(:disabled) { border-color: var(--pen); }
 }
