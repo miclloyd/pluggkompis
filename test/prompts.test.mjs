@@ -49,3 +49,32 @@ test('fritext och sortering stoppar också bildfrågor', () => {
   assert.equal(so.byGoal.g1.length, 1);
   assert.equal(so.byGoal.g1[0].items[0][0], 'Står i 90 grader mot marken');
 });
+
+test('granskningens validering', async () => {
+  const { validateCoverage, validateItemReview, itemReviewPrompt, coverageReviewPrompt } = await import('../web/prompts.js');
+  const goals = [{ id: 'g1', type: 'begrepp', text: 'Kunna x', sources: [{ m: 'm1', p: 1 }] }];
+  const refs = new Set(['m1:1', 'm1:2']);
+  const c = validateCoverage({ krav: [
+    { krav: 'Begreppet åra', status: 'täckt', mål: ['g1', 'gX'] },
+    { krav: 'Begreppet sköld', status: 'saknas', mål: [], förslag: { text: 'Kunna förklara vad en sköld är', type: 'begrepp', sources: [{ m: 'm1', p: 2 }, { m: 'm9', p: 1 }] } },
+    { krav: 'Utan förslag', status: 'delvis', mål: [] },
+    { krav: 'Fel status', status: 'kanske' },
+  ], sammanfattning: 'S' }, goals, refs);
+  assert.equal(c.krav.length, 3);
+  assert.deepEqual(c.krav[0].mal, ['g1'], 'okänt mål filtreras bort');
+  assert.deepEqual(c.krav[1].forslag.sources, [{ m: 'm1', p: 2 }], 'ogiltig källa filtreras bort');
+  assert.equal(c.krav[2].forslag, null);
+  assert.ok(!c.ok && c.errors.length === 2, JSON.stringify(c.errors));
+  assert.equal(validateCoverage({ krav: [] }, goals, refs).ok, false);
+
+  const items = [{ id: 'i1', goalId: 'g1', level: 1, kind: 'mcq', q: 'Vad?', options: ['A', 'B'], answer: 0, src: { m: 'm1', p: 1 } }];
+  const r = validateItemReview({ fynd: [{ id: 'i1', problem: 'flera-rätt', vad: 'Båda står.' }, { id: 'i1', problem: 'oklar', vad: 'x' },
+    { id: 'i9', problem: 'oklar', vad: 'x' }, { id: 'i1', problem: 'påhittat', vad: 'x' }] }, items);
+  assert.equal(r.fynd.length, 1, 'en per fråga, okända bort');
+  assert.ok(!r.ok);
+  assert.equal(validateItemReview({ fynd: [] }, items).ok, true, 'inga fynd är ett giltigt svar');
+  assert.equal(validateItemReview({}, items).ok, false, 'saknad lista är inte "inga fynd"');
+  const p = itemReviewPrompt({ test: { grade: 4, subject: 'Historia' }, goals, items, sourceText: '[m1:1] text' });
+  assert.match(p, /"rätt":"A"/);
+  assert.match(coverageReviewPrompt({ test: { grade: 4, subject: 'Historia', description: 'D' }, goals, materials: [] }), /Varje punkt i beskrivningen/);
+});

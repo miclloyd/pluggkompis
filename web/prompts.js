@@ -664,13 +664,13 @@ Frågorna (en per rad, JSON):
 ${items.map(reviewItemText).join('\n')}
 
 Kontrollera varje fråga mot underlaget:
-- saknar-stöd: det rätta svaret (eller en punkt i bedöms_på) står inte i underlaget, varken på källsidan eller annan sida ovan.
+- saknar-stöd: det rätta svaret (eller en punkt i bedöms_på) står inte i underlaget, varken på källsidan eller annan sida ovan, och är inte heller allmän kunskap som stämmer och som barnet rimligen kan i årskursen.
 - fel-svar: underlaget säger något annat än det rätta svaret.
 - flera-rätt: vid flerval är fler än ett alternativ rätt enligt underlaget.
 - ingen-grund: frågan ber om en förklaring eller ett skäl som underlaget inte ger, så barnet kan bara gissa.
 - oklar: frågan går att förstå på flera sätt.
-- dubblett: samma fråga, med samma svar, finns redan för något av målen.
-Allmän kunskap som barnet rimligen kan i årskursen räknas inte som fel om den stämmer. Bildtexter och kartor i underlaget räknas som underlag.
+- dubblett: samma fråga, med samma svar, finns redan för något av målen. Flagga bara den senare av de två och skriv den andras id i vad.
+Bildtexter och kartor i underlaget räknas som underlag. Är du osäker, flagga inte: föräldern tar bort frågor du flaggar.
 
 Svara endast med JSON och bara med frågor som har problem (tom lista om allt är bra):
 {"fynd":[{"id":"<frågans id>","problem":"saknar-stöd|fel-svar|flera-rätt|ingen-grund|oklar|dubblett","vad":"<en mening: vad som är fel och vad underlaget säger>"}]}`;

@@ -23,7 +23,7 @@ import { Sheet } from './sheet.js';
 import { TaskList, TaskView, ParentTasks, SUPPORT_LABEL } from './tasks.js';
 import { PrintSheet } from './print.js';
 import { buildPlan, allowedGoals, minutesOnDay, DEFAULT_SCHEDULE, WEEKDAYS, PHASE_LABEL } from './plan.js';
-import { interpretMaterial, proposeGoals, buildBank, buildHighBank, buildSortBank, reviewTest, StepError } from './pipeline.js';
+import { interpretMaterial, proposeGoals, buildBank, buildHighBank, buildSortBank, reviewTest, reviewGoalItems, StepError } from './pipeline.js';
 import { highLevelsFor } from './prompts.js';
 import { gradeFree, regradeOnDispute, TIERS } from './grading.js';
 import {
@@ -660,6 +660,19 @@ function TestSetup({ env, go, testId }) {
       if (!(after[goal.id] || []).length) throw new StepError('Inga frågor kunde skapas för målet. Kontrollera sidorna eller skriv underlaget själv.');
       await repo.saveGoal(testId, { ...goal, pending: false });
       if ([...r.short, ...r2.short].length) setInfo(`Färre frågor än vanligt för: ${goal.text}.`);
+      // Granskat prov: det nya målets frågor granskas också (annars når de barnet ogranskade).
+      const cur = await repo.getTest(testId).catch(() => null);
+      if (cur?.review) {
+        // Ett fel här tar inte bort målet: frågorna finns, och målet blir "kunde inte granskas".
+        setBusy('Granskar frågorna för målet');
+        try {
+          const review = await reviewGoalItems({ ai: env.ai, test: cur, goal, banks: after, materials, review: cur.review });
+          await repo.updateTest(testId, { review });
+        } catch (e) {
+          await repo.updateTest(testId, { review: { ...cur.review, unreviewed: [...new Set([...(cur.review.unreviewed || []), goal.id])] } }).catch(() => {});
+          setInfo(`Målet är tillagt, men frågorna kunde inte granskas: ${errText(e)}`);
+        }
+      }
     } catch (e) {
       if (isNew) await repo.saveGoal(testId, { ...goal, removed: true }).catch(() => {});
       throw e;
@@ -676,15 +689,15 @@ function TestSetup({ env, go, testId }) {
   // ---- Granskningen ----
   const reviewNow = async () => {
     const fresh = await repo.listBanks(testId);
-    const desc = materials.filter(m => m.role === 'beskrivning').flatMap(m => m.pages.map(p => p.text)).join('\n');
-    const t = { ...test, description: [test.description, desc].filter(Boolean).join('\n\n') };
-    const review = await reviewTest({ ai: env.ai, test: t, goals: activeGoals.filter(g => !g.pending), banks: fresh, materials,
+    // Beskrivningssidorna finns redan i materialet som granskaren läser; description är förälderns text.
+    const review = await reviewTest({ ai: env.ai, test, goals: activeGoals.filter(g => !g.pending), banks: fresh, materials,
       onProgress: p => setBankProg({ ...p, unit: 'delar' }) });
     setBankProg(null);
     await repo.updateTest(testId, { review });
   };
   const startReview = () => run('Granskar provet', async () => { try { await reviewNow(); } finally { setBankProg(null); } });
-  const decide = (key, value) => run('Sparar', () => repo.updateTest(testId, { review: { ...test.review, decisions: { ...(test.review?.decisions || {}), [key]: value } } }));
+  const decide = (keys, value) => run('Sparar', () => repo.updateTest(testId, { review: { ...test.review,
+    decisions: { ...(test.review?.decisions || {}), ...Object.fromEntries([].concat(keys).map(k => [k, value])) } } }));
   const removeItem = (gid, iid) => run('Tar bort frågan', async () => {
     await repo.saveBank(testId, gid, (banks[gid] || []).filter(i => i.id !== iid));
     await repo.updateTest(testId, { review: { ...test.review, decisions: { ...(test.review?.decisions || {}), ['f:' + iid]: 'borttagen' } } });
@@ -695,7 +708,9 @@ function TestSetup({ env, go, testId }) {
       approved: true, pending: true, removed: false, order: goals.length };
     await repo.saveGoal(testId, goal);
     await fillGoalNow(goal, true);
-    await repo.updateTest(testId, { review: { ...test.review, decisions: { ...(test.review?.decisions || {}), ['k:' + i]: 'tillagt' } } });
+    // Läs om provet: fillGoalNow har just lagt till granskningen av målets frågor.
+    const cur = await repo.getTest(testId);
+    await repo.updateTest(testId, { review: { ...cur.review, decisions: { ...(cur.review?.decisions || {}), ['k:' + i]: 'tillagt' } } });
   });
   const approveTest = () => run('Godkänner provet', () => repo.updateTest(testId, { reviewed: true }));
 
@@ -1122,7 +1137,8 @@ function ReviewPanel({ test, goals, banks, busy, onReview, onDecide, onRemoveIte
   const openGaps = gaps.filter(k => !dec['k:' + k.i]);
   const flags = (r?.fynd || []).filter(f => item(f));
   const openFlags = flags.filter(f => !dec['f:' + f.id]);
-  const open = openGaps.length + openFlags.length;
+  const unrev = (r?.unreviewed || []).filter(id => goals.some(g => g.id === id) && !dec['u:' + id]);
+  const open = openGaps.length + openFlags.length + unrev.length;
   const covered = (r?.krav || []).filter(k => k.status === 'täckt');
   const goalText = id => goals.find(g => g.id === id)?.text || '';
   return html`<section class="review">
@@ -1146,6 +1162,8 @@ function ReviewPanel({ test, goals, banks, busy, onReview, onDecide, onRemoveIte
       </li>`)}</ul>`}
       ${covered.length > 0 && html`<details class="small"><summary>Täckta krav</summary><ul>${covered.map(k => html`<li>${k.krav}</li>`)}</ul></details>`}
       <h4>Frågorna</h4>
+      ${unrev.length > 0 && html`<div class="notice warn small"><p>Frågorna för ${unrev.length} ${unrev.length === 1 ? 'mål' : 'mål'} kunde inte granskas: ${unrev.map(goalText).join('; ')}. Granska igen, eller titta själv.</p>
+        <div class="actions left"><button class="btn ghost small" disabled=${busy} onClick=${() => onDecide(unrev.map(id => 'u:' + id), 'tittat')}>Jag har tittat själv</button></div></div>`}
       <p class="small">${flags.length ? `${flags.length} ${flags.length === 1 ? 'fråga har' : 'frågor har'} anmärkningar:` : 'Inga anmärkningar på frågorna.'}</p>
       ${flags.length > 0 && html`<ul class="review-list">${flags.map(f => { const it = item(f); return html`<li class=${dec['f:' + f.id] ? 'done' : ''}>
         <p class="small muted">${goalText(f.goalId)} · nivå ${it.level}</p>

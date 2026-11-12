@@ -205,18 +205,41 @@ export async function reviewTest({ ai, test, goals, banks, materials, onProgress
   if (!cov.krav?.length) throw new StepError('Granskningen av lärarens krav gick inte att läsa. Försök igen.');
   if (!cov.ok) errors.push(...cov.errors.slice(0, 3));
 
+  const { fynd, unreviewed } = await reviewItems({ ai, test, batches, banks, usable, onProgress, start: 1, total, errors });
+  onProgress?.({ done: total, total, label: '' });
+  return { at: Date.now(), pv: PROMPT_VERSION, krav: cov.krav, summary: cov.summary, fynd, unreviewed, errors, decisions: {} };
+}
+
+// Frågorna mot materialet, tre mål i taget. En omgång som inte går att läsa blir "ej granskad"
+// (unreviewed), aldrig tyst "inga fynd".
+async function reviewItems({ ai, test, batches, banks, usable, onProgress, start = 0, total, errors }) {
   const fynd = [];
-  let done = 1;
+  const unreviewed = [];
+  let done = start;
   for (const batch of batches) {
     onProgress?.({ done, total, label: batch.map(g => g.text).join(' · ') });
     const items = batch.flatMap(g => banks[g.id] || []);
     const cited = items.filter(i => i.src && i.src.m !== 'note').map(i => ({ m: i.src.m, p: i.src.p }));
     const sourceText = sourceTextFor([...batch, { sources: cited }], usable);
-    const v = await askJson(ai, itemReviewPrompt({ test, goals: batch, items, sourceText }), { tier: 'complex' }, out => validateItemReview(out, items));
-    if (!v.ok) errors.push(...v.errors.slice(0, 2));
-    for (const f of v.fynd || []) fynd.push({ ...f, goalId: items.find(i => i.id === f.id)?.goalId });
+    let v = null;
+    try {
+      v = await askJson(ai, itemReviewPrompt({ test, goals: batch, items, sourceText }), { tier: 'complex' }, out => validateItemReview(out, items));
+    } catch (e) { errors.push(e.message || 'Anropet misslyckades.'); }
+    if (!v?.ok) {
+      if (v) errors.push(...v.errors.slice(0, 2));
+      unreviewed.push(...batch.map(g => g.id));
+    }
+    for (const f of v?.fynd || []) fynd.push({ ...f, goalId: items.find(i => i.id === f.id)?.goalId });
     done++;
   }
-  onProgress?.({ done: total, total, label: '' });
-  return { at: Date.now(), pv: PROMPT_VERSION, krav: cov.krav, summary: cov.summary, fynd, errors, decisions: {} };
+  return { fynd, unreviewed };
+}
+
+// Ett mål som lagts till efter granskningen: dess frågor granskas och läggs till i granskningen.
+export async function reviewGoalItems({ ai, test, goal, banks, materials, review }) {
+  const usable = materials.filter(m => m.status === 'interpreted');
+  const errors = [];
+  const { fynd, unreviewed } = await reviewItems({ ai, test, batches: [[goal]], banks, usable, total: 1, errors });
+  return { ...review, fynd: [...(review.fynd || []).filter(f => f.goalId !== goal.id), ...fynd],
+    unreviewed: [...(review.unreviewed || []).filter(id => id !== goal.id), ...unreviewed], errors: [...(review.errors || []), ...errors] };
 }
