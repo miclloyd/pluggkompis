@@ -2,6 +2,7 @@
 // kompis under tiden. Allt rättas på slutet. Resultatet sparas för föräldern, och svaren räknas
 // in i dagens minuter, men provläget flyttar inte nivåerna (det är en mätning, inte övning).
 import { withDictation } from './speech.js';
+import { withChars } from './chars.js';
 import { html, useState, useEffect, useRef } from './lib.js';
 import {
   practiceMax, hasSpellingLure, shuffle, gradeLocal, isFree, correctAnswerText, newMastery,
@@ -88,7 +89,7 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
         repo.listAttempts(testId).catch(() => []),
       ]);
       const active = goals.filter(g => !g.removed);
-      let picks = pickExam({ goals: active, mastery, banks: withDictation(active, banks) });
+      let picks = pickExam({ goals: active, mastery, banks: withChars(active, withDictation(active, banks)) });
       // Utan AI går fritext inte att rätta, så då används bara frågor som rättas direkt.
       if (!env.ai) picks = picks.filter(p => !isFree(p.item));
       const sec = secondsPerAnswer(attempts);

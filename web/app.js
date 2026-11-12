@@ -4,6 +4,7 @@ import { createRepo, uid } from './repo.js';
 import { createLocalAuth } from './auth.js';
 import { gradeOf, birthYearFor } from './grade.js';
 import { withDictation, speak, SpeakButton, readAloudText } from './speech.js';
+import { withChars, CharBar } from './chars.js';
 import { readFile, fileKind } from './extract.js';
 import { summarize, relDay, pct } from './stats.js';
 import { coverVar, Ring, Stamp, AnswerTrail, IconBook, IconChat, IconMic } from './ui.js';
@@ -1066,7 +1067,7 @@ function Practice({ env, go, testId, profileId }) {
         repo.getTest(testId), repo.listGoals(testId), repo.listBanks(testId), repo.listMastery(testId), repo.listMaterials(testId), repo.listProfiles(),
         repo.listAttempts(testId).catch(() => []), repo.listEvents(testId).catch(() => []),
       ]);
-      const s = { test, goals: goals.filter(g => !g.removed), banks: withDictation(goals, banks), mastery, materials, attempts, events, profile: profiles.find(p => p.id === profileId) };
+      const s = { test, goals: goals.filter(g => !g.removed), banks: withChars(goals, withDictation(goals, banks)), mastery, materials, attempts, events, profile: profiles.find(p => p.id === profileId) };
       setState(s);
       setCurrent(choose(s, []));
     })();
@@ -1341,6 +1342,7 @@ function TextAnswer({ item, disabled, onAnswer, result, hideGiven }) {
     ${item.kind === 'dictation' && html`<p class="dictation"><${SpeakButton} text=${item.answer} lang=${item.lang} label="Lyssna igen" /></p>`}
     <label class="sr" for="ans">Ditt svar</label>
     <input id="ans" ref=${ref} class="answer" autocomplete="off" autocapitalize="off" spellcheck="false" disabled=${disabled} value=${hideGiven ? '' : v} onInput=${e => setV(e.target.value)} placeholder=${hideGiven ? 'Öva på stavningen nedanför' : 'Skriv ditt svar'} />
+    ${!disabled && html`<${CharBar} chars=${item.chars} inputRef=${ref} value=${v} onChange=${setV} />`}
     ${!disabled && html`<button class="btn primary" disabled=${!v.trim()}>Svara</button>`}
   </form>`;
 }
@@ -1355,6 +1357,7 @@ function FreeAnswer({ item, disabled, onAnswer }) {
     <label class="sr" for="free">Ditt svar</label>
     <textarea id="free" ref=${ref} class="answer free" rows=${item.level >= 4 ? 5 : 3} disabled=${disabled} value=${v}
       onInput=${e => setV(e.target.value)} placeholder=${item.kind === 'sentence' ? 'Skriv en mening' : item.level >= 4 ? 'Förklara med egna ord' : 'Svara med en eller två meningar'}></textarea>
+    ${!disabled && html`<${CharBar} chars=${item.chars} inputRef=${ref} value=${v} onChange=${setV} />`}
     ${!disabled && html`<div class="actions"><span class="small muted">${words ? `${words} ord` : ''}</span><button class="btn primary" disabled=${!v.trim()}>Svara</button></div>`}
   </form>`;
 }
@@ -1411,7 +1414,7 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
         ? html`<details class="answer-line"><summary>Visa ett exempel på svar</summary><strong>${item.answer}</strong></details>`
         : html`<p class="answer-line">Exempel på bra svar: <strong>${item.answer}</strong></p>`)
       : result.verdict !== 'right' && html`<p class="answer-line">Rätt svar: <strong>${correctAnswerText(item)}</strong></p>`}
-    ${cw && html`<${CoverWrite} word=${correctAnswerText(item)} onDone=${onCopyDone} />`}
+    ${cw && html`<${CoverWrite} word=${correctAnswerText(item)} chars=${item.chars} onDone=${onCopyDone} />`}
     ${item.explain && html`<p>${item.explain}</p>`}
     <p class="small muted">${/^kunna\s/i.test(goalText) ? `Du övar på att ${goalText.replace(/^kunna\s+/i, '')}` : `Mål: ${goalText}`}${/[.!?]$/.test(goalText) ? '' : '.'}</p>
     ${result.helped && html`<p class="small muted">Du tittade i materialet först, så det här räknas som övning och flyttar inte nivån.</p>`}

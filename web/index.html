@@ -658,6 +658,10 @@ body.sheet-open { overflow: hidden; }
 .chat-ask { font-weight: 700; }
 
 @media (prefers-reduced-motion: reduce) { .spinner, .stamp, .qcard.enter, .feedback, .fb-icon, .sheet-backdrop, .sheet-panel, .typing i, .kompis-bubble { animation: none; } .flip-inner { transition: none; } .m-item, .s-chip, .option, .tool { transition: none; } .bar span, .ring circle, .profile, .cover-front { transition: none; } .profile:hover, .cover:hover .cover-front { transform: none; } }
+/* Specialtecken för glosor */
+.char-bar { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.char-bar .char { min-width: 44px; min-height: 44px; padding: 0 10px; font-size: 1.15rem; border: 1.5px solid var(--rule-strong); border-radius: 10px; background: var(--sheet); color: var(--ink); cursor: pointer; }
+.char-bar .char.shift.on { background: var(--pen-soft); border-color: var(--pen); }
 /* Matematik */
 .math-steps { padding-left: 1.4em; display: grid; gap: 6px; margin: 10px 0; font-variant-numeric: tabular-nums; }
 .math-steps li.revealed { color: var(--good); }

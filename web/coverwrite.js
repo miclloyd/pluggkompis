@@ -1,6 +1,7 @@
 // "Titta, täck, skriv, kontrollera": efter ett stavfel tittar barnet på det rätta ordet, ordet
 // döljs, barnet skriver det ur minnet och kontrollerar. Barnets felstavning visas aldrig igen,
 // eftersom den annars kan fastna. Övningen påverkar inte nivån.
+import { CharBar } from './chars.js';
 import { html, useState, useEffect, useRef } from './lib.js';
 import { normalize } from './engine.js';
 
@@ -13,7 +14,7 @@ export function needsCoverWrite(item, goal, result) {
   return result.verdict === 'almost' && /stavning|accent|prickar/i.test(result.note || '');
 }
 
-export function CoverWrite({ word, onDone }) {
+export function CoverWrite({ word, chars, onDone }) {
   const [phase, setPhase] = useState('look'); // look | write | again | done
   const [round, setRound] = useState(1);
   const [ok, setOk] = useState(false);
@@ -50,6 +51,7 @@ export function CoverWrite({ word, onDone }) {
         <label class="sr" for="cw-in">Skriv ordet</label>
         <input id="cw-in" ref=${input} class="answer" value=${v} onInput=${e => setV(e.target.value)}
           autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Skriv ordet" />
+        <${CharBar} chars=${chars} inputRef=${input} value=${v} onChange=${setV} />
         <button class="btn primary" disabled=${!v.trim()}>Kontrollera</button>
       </form>`}
     ${phase === 'done' && html`
