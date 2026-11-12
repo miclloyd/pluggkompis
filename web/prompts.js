@@ -10,11 +10,20 @@ const SEEN_RULES = `- Barnet ser bara frågan, aldrig materialet. Fråga inte om
 - Använd materialets egna ord för begrepp. Byt inte till ett annat ord som inte står i materialet (till exempel "försvinningspunkt" när materialet säger "gränspunkt").`;
 
 // Frågor som pekar på en bild barnet inte ser: "Bilden visar …", "Bilden med …", "I diagrammet …",
-// "Titta på bilden". Allmänna frågor om att rita ("Var placerar du horisontlinjen i bilden?",
-// "Vilken bild passar bäst …?") ska gå igenom, så "i/på bilden" räcker inte ensamt.
+// "Titta på bilden", "Vad ser du på bilden?", "Vad visar bilden?". Allmänna frågor om att rita
+// ("Var placerar du horisontlinjen i bilden?", "Vilken bild passar bäst …?") ska gå igenom, så
+// "i/på bilden" räknas bara efter ett verb för att se (ser, syns, visas …).
 const PICS = 'bilden|bilderna|diagrammet|figuren|kartan|tabellen|grafen|illustrationen|fotot';
-const HIDDEN_RE = new RegExp(`(?:^|[^\\p{L}])(?:(?:${PICS})\\s+(?:med|som visar|visar|över|ovan|nedan|till (?:höger|vänster))|(?:i|på) (?:diagrammet|figuren|tabellen|grafen|illustrationen)|(?:i|på) (?:${PICS}) (?:ovan|nedan|på sidan)|titta på (?:${PICS})|se på (?:${PICS}))(?![\\p{L}])`, 'iu');
-export const refersToHiddenImage = q => HIDDEN_RE.test(String(q));
+const SEE = 'ser|syns|visas|står|finns';
+const HIDDEN_RE = new RegExp([
+  `(?:${PICS})\\s+(?:med|som\\s+visar|visar|över|ovan|nedan|till\\s+(?:höger|vänster))`,
+  `(?:i|på)\\s+(?:diagrammet|figuren|tabellen|grafen|illustrationen)`,
+  `(?:i|på)\\s+(?:${PICS})\\s+(?:ovan|nedan|på\\s+sidan)`,
+  `(?:titta|se)\\s+på\\s+(?:${PICS})`,
+  `visar\\s+(?:${PICS})`,
+  `(?:${SEE})(?:\\s+\\p{L}+){0,3}?\\s+(?:i|på)\\s+(?:${PICS})`,
+].map(p => `(?:^|[^\\p{L}])(?:${p})(?![\\p{L}])`).join('|'), 'iu');
+export const refersToHiddenImage = q => HIDDEN_RE.test(String(q).replace(/\s+/g, ' '));
 const HIDDEN_IMAGE = 'pekar på en bild eller ett diagram som barnet inte ser. Fråga om det bilden visar i stället.';
 
 const json = v => JSON.stringify(v);

@@ -6,7 +6,8 @@ test('frågor som pekar på en bild barnet inte ser stoppas', () => {
   for (const q of ['Bilden med skogen och höga träd visar en svart linje som exempel. Vilken sorts linje är det?',
     'I diagrammet över rummets grund, var sitter gränspunkten?', 'Bilden visar en kub. Vilken sida ser du?', 'Diagrammet visar temperaturen. När är det varmast?',
     'Kartan över Norden: vilket land ligger längst norrut?', 'Titta på bilden ovan. Vad ser du?', 'Vad står i tabellen?', 'Figuren som visar cellen: vad är A?',
-    'Vad syns på bilden ovan?'])
+    'Vad syns på bilden ovan?', 'Vad ser du på bilden?', 'Vad visar bilden?', 'Vad ser man i diagrammet?', 'Vilken färg syns  på\u00a0bilden?',
+    'Vilket djur står det på bilden?', 'Vad finns det i bilden?'])
     assert.ok(refersToHiddenImage(q), q);
   for (const q of ['Vilken bild passar bäst för grodperspektiv?', 'Vad är en gränspunkt?', 'Varför ritar man en bild i centralperspektiv?',
     'Var placerar du horisontlinjen i bilden om du vill rita ett rum i fågelperspektiv?', 'Vad ska finnas på bilden när du är klar?',
@@ -21,6 +22,7 @@ test('validateBank avvisar bildfrågan med en förklaring', () => {
   const r = validateBank({ items: [item('Bilden med skogen visar en linje. Vilken sorts linje?'), item('Hur står en lodrät linje mot marken?')] }, goals, refs);
   assert.ok(r.errors.some(e => /Fråga 1: pekar på en bild/.test(e)), JSON.stringify(r.errors));
   assert.ok(!r.errors.some(e => /Fråga 2/.test(e)), JSON.stringify(r.errors));
+  assert.deepEqual(r.byGoal.g1.map(i => i.q), ['Hur står en lodrät linje mot marken?'], 'den giltiga frågan finns kvar');
 });
 
 test('alla frågepromptar har reglerna om bilder och materialets ord', () => {
@@ -38,9 +40,12 @@ test('fritext och sortering stoppar också bildfrågor', () => {
   const h = validateHigh({ items: [high('Bilden visar ett träd. Hur står trädet?'), high('Hur står en lodrät linje mot marken?')] }, goals, refs);
   assert.ok(h.errors.some(e => /^Fråga 1: pekar på en bild/.test(e)), JSON.stringify(h.errors));
   assert.ok(!h.errors.some(e => /^Fråga 2/.test(e)), JSON.stringify(h.errors));
+  assert.deepEqual(h.byGoal.g1.map(i => i.q), ['Hur står en lodrät linje mot marken?']);
   const sort = first => ({ goal: 'g1', kind: 'sort', q: 'Sortera påståendena', categories: ['Lodrät', 'Vågrät'],
     items: [[first, 'Lodrät'], ['Kubens hörn', 'Lodrät'], ['Framsidans överkant', 'Vågrät'], ['Parallell med marken', 'Vågrät']], src: { m: 'm1', p: 6 } });
   const so = validateSortItems({ items: [sort('Linjen i bilden med skogen'), sort('Står i 90 grader mot marken')] }, goals, refs);
   assert.ok(so.errors.some(e => /^Övning 1: ett påstående pekar på en bild/.test(e)), JSON.stringify(so.errors));
   assert.ok(!so.errors.some(e => /^Övning 2/.test(e)), JSON.stringify(so.errors));
+  assert.equal(so.byGoal.g1.length, 1);
+  assert.equal(so.byGoal.g1[0].items[0][0], 'Står i 90 grader mot marken');
 });
