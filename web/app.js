@@ -26,7 +26,7 @@ import { interpretMaterial, proposeGoals, buildBank, buildHighBank, buildSortBan
 import { highLevelsFor } from './prompts.js';
 import { gradeFree, regradeOnDispute, TIERS } from './grading.js';
 import {
-  GOAL_TYPES, TYPE_LABEL, practiceMax, newMastery, applyResult, gradeLocal, correctAnswerText,
+  GOAL_TYPES, TYPE_LABEL, practiceMax, childGoal, parsePages, newMastery, applyResult, gradeLocal, correctAnswerText,
   pickNext, testProgress, goalProgress, allMastered, shuffle, replayMastery, isFree,
   canJump, jumpUp, dayKey,
 } from './engine.js';
@@ -643,21 +643,29 @@ function TestSetup({ env, go, testId }) {
 
   // Ett mål som läggs till när frågorna redan finns: frågorna skapas direkt, bara för det målet.
   // Blir det inga frågor tas målet bort igen, så att barnet aldrig får ett mål utan frågor.
-  const addLateGoal = g => run('Lägger till målet och skapar frågor', async () => {
-    const goal = { ...g, approved: true, order: goals.length };
-    await repo.saveGoal(testId, goal);
+  // pending: barnet ser inte målet (childGoal) förrän frågorna finns; avbryts det syns det för
+  // föräldern som "frågorna saknas" med Skapa igen / Ta bort.
+  const fillGoalNow = async (goal, isNew) => {
     try {
-      const r = await buildBank({ ai: env.ai, repo, test, goals: [goal], materials, existing: {}, onProgress: setBankProg });
+      const r = await buildBank({ ai: env.ai, repo, test, goals: [goal], materials, existing: banks, onProgress: setBankProg });
       const fresh = await repo.listBanks(testId);
       const r2 = await buildHighBank({ ai: env.ai, repo, test, goals: [goal], materials, existing: fresh, onProgress: setBankProg });
       const after = await repo.listBanks(testId);
       if (!(after[goal.id] || []).length) throw new StepError('Inga frågor kunde skapas för målet. Kontrollera sidorna eller skriv underlaget själv.');
+      await repo.saveGoal(testId, { ...goal, pending: false });
       if ([...r.short, ...r2.short].length) setInfo(`Färre frågor än vanligt för: ${goal.text}.`);
     } catch (e) {
-      await repo.saveGoal(testId, { ...goal, removed: true });
+      if (isNew) await repo.saveGoal(testId, { ...goal, removed: true }).catch(() => {});
       throw e;
     } finally { setBankProg(null); }
+  };
+  const fillGoal = goal => run('Skapar frågor för målet', () => fillGoalNow(goal, false));
+  const addLateGoal = g => run('Lägger till målet och skapar frågor', async () => {
+    const goal = { ...g, approved: true, pending: true, order: goals.length };
+    await repo.saveGoal(testId, goal);
+    await fillGoalNow(goal, true);
   });
+  const pendingGoals = activeGoals.filter(g => g.pending);
 
   const missingSort = activeGoals.filter(g => g.type === 'samband' && !(banks[g.id] || []).some(i => i.kind === 'sort'));
   const makeSort = () => run('Skapar sorteringsövningar', async () => {
@@ -735,6 +743,9 @@ function TestSetup({ env, go, testId }) {
             ${test.outOfScope?.length > 0 && html`<div class="oos"><strong>Ingår inte i provet:</strong> ${test.outOfScope.join(' · ')}</div>`}
             <ul class="goals">${activeGoals.map(g => html`<${GoalEditor} key=${g.id} goal=${g} materials=${materials} locked=${true} mastery=${mastery[g.id]} bank=${banks[g.id]} onSave=${() => {}}
               onSaveText=${!busy && (async ng => { await repo.saveGoal(testId, ng); reload(); })} />`)}</ul>
+            ${pendingGoals.map(g => html`<div class="notice warn"><p><strong>Frågorna saknas för ett mål:</strong> ${g.text}. Barnet ser det inte förrän frågorna finns.</p>
+              <div class="actions"><button class="btn ghost small" disabled=${!!busy} onClick=${() => run('Tar bort målet', () => repo.saveGoal(testId, { ...g, removed: true }))}>Ta bort</button>
+                <button class="btn primary small" disabled=${!!busy} onClick=${() => fillGoal(g)}>Skapa frågor igen</button></div></div>`)}
             ${!busy && html`<${AddGoal} materials=${materials} late onAdd=${addLateGoal} />`}
             <${BankPreview} goals=${activeGoals} banks=${banks} materials=${materials} onDelete=${async (gid, iid) => { await repo.saveBank(testId, gid, banks[gid].filter(i => i.id !== iid)); reload(); }} />
           </section>`}
@@ -778,9 +789,7 @@ function TestSetup({ env, go, testId }) {
             mastery=${mastery[g.id]} bank=${banks[g.id]} onSave=${async ng => { await repo.saveGoal(testId, ng); reload(); }}
             onSaveText=${ready && !busy && (async ng => { await repo.saveGoal(testId, ng); reload(); })} />`)}
       </ul>
-      ${activeGoals.length > 0 && (ready
-        ? !busy && html`<${AddGoal} materials=${materials} late onAdd=${addLateGoal} />`
-        : html`<${AddGoal} materials=${materials} onAdd=${async g => { await repo.saveGoal(testId, { ...g, order: goals.length }); reload(); }} />`)}
+      ${activeGoals.length > 0 && !ready && html`<${AddGoal} materials=${materials} onAdd=${async g => { await repo.saveGoal(testId, { ...g, order: goals.length }); reload(); }} />`}
     </section>
 
     <section class="block">
@@ -1070,17 +1079,6 @@ function GoalEditor({ goal, materials, locked, onSave, onSaveText, mastery, bank
 }
 
 // Sidor ur "2-3, 5" (tom = alla sidor i filen); bara sidor som finns.
-function parsePages(txt, pages) {
-  const have = new Set(pages.map(p => p.p));
-  if (!String(txt).trim()) return [...have];
-  const out = new Set();
-  for (const part of String(txt).split(/[,; ]+/).filter(Boolean)) {
-    const [a, b] = part.split(/[-–]/).map(Number);
-    for (let p = a; p <= (b || a); p++) if (have.has(p)) out.add(p);
-  }
-  return [...out].sort((x, y) => x - y);
-}
-
 function AddGoal({ materials, onAdd, late }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
@@ -1090,7 +1088,7 @@ function AddGoal({ materials, onAdd, late }) {
   const [mref, setMref] = useState(materials[0]?.ref || '');
   const [pages, setPages] = useState('');
   if (!open) return html`<button class="btn ghost" onClick=${() => setOpen(true)}>Lägg till eget mål</button>`;
-  const mat = materials.find(m => m.ref === mref);
+  const mat = materials.find(m => m.ref === mref) || materials[0];
   const chosen = mat ? parsePages(pages, mat.pages || []) : [];
   const sources = chosen.map(p => ({ m: mat.ref, p }));
   const ok = text.trim() && (type !== 'matematik' || skill) && (sources.length || note.trim());
@@ -1147,7 +1145,7 @@ function ChildHome({ env, go, profileId }) {
       const tests = (await env.repo.listTests()).filter(t => t.profileId === profileId && t.status === 'ready');
       const withProg = await Promise.all(tests.map(async t => {
         const [goals, mastery, banks, attempts] = await Promise.all([env.repo.listGoals(t.id), env.repo.listMastery(t.id), env.repo.listBanks(t.id), env.repo.listAttempts(t.id).catch(() => [])]);
-        const active = goals.filter(g => !g.removed);
+        const active = goals.filter(childGoal);
         const plan = buildPlan({ test: t, goals: active, mastery, banks, attempts, schedule: profile?.schedule || DEFAULT_SCHEDULE, offDates: t.offDates || [] });
         const mastered = active.filter(g => mastery[g.id]?.passedMax && mastery[g.id].level >= practiceMax(g, banks[g.id])).length;
         return { ...t, progress: testProgress(active, mastery, banks), done: allMastered(active, mastery, banks), today: plan?.today || null, mastered, goalCount: active.length, teachable: active.some(g => g.type !== 'glosa') };
@@ -1254,7 +1252,7 @@ function Practice({ env, go, testId, profileId }) {
         repo.getTest(testId), repo.listGoals(testId), repo.listBanks(testId), repo.listMastery(testId), repo.listMaterials(testId), repo.listProfiles(),
         repo.listAttempts(testId).catch(() => []), repo.listEvents(testId).catch(() => []),
       ]);
-      const s = { test, goals: goals.filter(g => !g.removed), banks: withChars(goals, withDictation(goals, banks)), mastery, materials, attempts, events, profile: profiles.find(p => p.id === profileId) };
+      const s = { test, goals: goals.filter(childGoal), banks: withChars(goals, withDictation(goals, banks)), mastery, materials, attempts, events, profile: profiles.find(p => p.id === profileId) };
       setState(s);
       setCurrent(choose(s, []));
     })();

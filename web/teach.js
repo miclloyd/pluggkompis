@@ -6,6 +6,7 @@ import { teachFacts, teachTurn } from './pipeline.js';
 import { uid } from './repo.js';
 import { coverVar, IconMic } from './ui.js';
 import { goalTopic } from './booklet.js';
+import { childGoal } from './engine.js';
 
 // Mål att lära ut: sådant barnet har övat på (inte glosor), svagast först, med lite slump.
 export function teachCandidates({ goals, mastery, attempts }) {
@@ -34,7 +35,7 @@ export function Teach({ env, go, testId, profileId }) {
         repo.getTest(testId), repo.listGoals(testId), repo.listBanks(testId), repo.listMastery(testId), repo.listMaterials(testId),
         repo.listProfiles(), repo.listAttempts(testId).catch(() => []),
       ]);
-      const cands = teachCandidates({ goals: goals.filter(g => !g.removed), mastery, attempts });
+      const cands = teachCandidates({ goals: goals.filter(childGoal), mastery, attempts });
       setS({ test, banks, materials, profile: profiles.find(p => p.id === profileId), cands });
     })().catch(() => setErr('Det gick inte att ladda.'));
   }, [testId]);

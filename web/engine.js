@@ -18,6 +18,23 @@ export const FREE_KINDS = ['short', 'explain', 'sentence'];
 export const isFree = item => FREE_KINDS.includes(item?.kind);
 
 // Högsta nivå som kan övas just nu: måltypens tak, men aldrig högre än vad frågebanken har frågor för.
+// Sidor ur "2-3, 5" (tom = alla sidor i filen); bara sidor som finns.
+export function parsePages(txt, pages) {
+  const have = [...new Set(pages.map(p => p.p))].sort((x, y) => x - y);
+  if (!String(txt).trim()) return have;
+  const want = [];
+  for (const part of String(txt).split(/[,; ]+/).filter(Boolean)) {
+    const [x, y = x] = part.split(/[-–]/).map(Number);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    want.push([Math.min(x, y), Math.max(x, y)]);
+  }
+  // Bara sidor som finns, så att ett stort intervall inte kostar något.
+  return have.filter(p => want.some(([lo, hi]) => p >= lo && p <= hi));
+}
+
+// Mål som barnet ser: inte borttagna och inte ett mål vars frågor fortfarande skapas.
+export const childGoal = g => !g.removed && !g.pending;
+
 export function practiceMax(goal, bank) {
   const typeMax = TYPE_MAX[goal.type] || 3;
   if (!bank) return typeMax;

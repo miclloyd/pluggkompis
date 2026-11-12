@@ -6,7 +6,7 @@ import { withChars } from './chars.js';
 import { goalLabel } from './booklet.js';
 import { html, useState, useEffect, useRef } from './lib.js';
 import {
-  practiceMax, hasSpellingLure, shuffle, gradeLocal, isFree, correctAnswerText, newMastery,
+  practiceMax, childGoal, hasSpellingLure, shuffle, gradeLocal, isFree, correctAnswerText, newMastery,
 } from './engine.js';
 import { gradeFree } from './grading.js';
 import { secondsPerAnswer } from './plan.js';
@@ -89,7 +89,7 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
         repo.getTest(testId), repo.listGoals(testId), repo.listBanks(testId), repo.listMastery(testId), repo.listProfiles(),
         repo.listAttempts(testId).catch(() => []),
       ]);
-      const active = goals.filter(g => !g.removed);
+      const active = goals.filter(childGoal);
       let picks = pickExam({ goals: active, mastery, banks: withChars(active, withDictation(active, banks)) });
       // Utan AI går fritext inte att rätta, så då används bara frågor som rättas direkt.
       if (!env.ai) picks = picks.filter(p => !isFree(p.item));

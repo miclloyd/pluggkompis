@@ -71,3 +71,16 @@ test('glosor, matematik och korta frågor tas aldrig bort som dubbletter', () =>
 test('rubriken blir aldrig tom', () => {
   assert.equal(goalTopic('Kunna (grodperspektiv)'), 'Det här målet');
 });
+
+test('sidorna för ett eget mål', async () => {
+  const { parsePages, childGoal } = await import('../web/engine.js');
+  const pages = [1, 2, 3, 4, 5, 6].map(p => ({ p }));
+  assert.deepEqual(parsePages('', pages), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(parsePages('2-3, 5', pages), [2, 3, 5]);
+  assert.deepEqual(parsePages('5–2', pages), [2, 3, 4, 5]);
+  assert.deepEqual(parsePages('1-99999999', pages), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(parsePages('9 abc', pages), []);
+  assert.equal(childGoal({}), true);
+  assert.equal(childGoal({ pending: true }), false);
+  assert.equal(childGoal({ removed: true }), false);
+});
