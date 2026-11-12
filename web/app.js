@@ -107,7 +107,7 @@ function App() {
         <button class="wordmark" onClick=${() => go({ name: 'start' })} aria-label="Till startsidan">Pluggkompis</button>
         <span class="top-actions">
           ${env.onLan && html`<button class="btn ghost small" onClick=${() => env.lan.logout().catch(() => {}).then(() => location.reload())}>Logga ut</button>`}
-          ${parentOk && html`<button class="btn ghost small" onClick=${() => env.auth.lock().then(() => { setParentOk(false); go({ name: 'start' }); }).catch(x => alert('Föräldraläget kunde inte låsas: ' + errText(x)))}><span class="lock-long">Lås föräldraläget</span><span class="lock-short">Lås</span></button>`}
+          ${parentOk && html`<button class="btn ghost small" onClick=${() => env.auth.lock().then(() => { setParentOk(false); go({ name: 'start' }); }).catch(x => alert('Föräldraläget kunde inte låsas: ' + errText(x)))} aria-label="Lås föräldraläget"><span class="lock-long">Lås föräldraläget</span><span class="lock-short">Lås</span></button>`}
           <${ThemeButton} mode=${theme} onChange=${changeTheme} />
         </span>
       </div>
