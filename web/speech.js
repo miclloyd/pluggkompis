@@ -88,6 +88,7 @@ export function SpeakButton({ text, lang = 'sv', label = 'Läs upp' }) {
       onSilent: mine(() => setState('silent')),
     });
     cur.current = u;
+    if (!u) setState('idle'); // ingen röst eller ingen text: inget att visa
   }
   return html`<span class="speak-wrap"><button type="button" class=${'btn ghost small speak' + (state === 'speaking' ? ' on' : '')} onClick=${press}
       aria-label=${state === 'speaking' ? 'Sluta läsa upp' : label}>${state === 'speaking' ? '⏹ Läser upp…' : `🔊 ${label}`}</button>
