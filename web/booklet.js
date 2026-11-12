@@ -22,7 +22,8 @@ export function goalTopic(t) {
   for (let prev = ''; prev !== s;) { prev = s; s = s.replace(/\s*\([^()]*\)\s*[.!]?$/, '').trim(); }
   const colon = s.indexOf(': ');
   if (colon > 0 && words(s.slice(0, colon)).length >= 3) s = s.slice(0, colon);
-  return s.replace(/[.:;,]$/, '');
+  s = s.replace(/[.:;,]$/, '');
+  return s || goalLabel(t);
 }
 
 // En punkt i "Det här ska du kunna" ska vara en hel mening: stor bokstav först, inget kolon
@@ -46,9 +47,13 @@ export function summaryFacts(candidates, { max = 4, minWords = 4 } = {}) {
 export function pickPrintItems({ goals, banks, mastery, perGoal = 3, onlyOpen = false }) {
   const out = [];
   const taken = [];
-  const similar = it => taken.some(q => overlap(q, it.q) >= 0.8);
+  // Bara för frågor med minst fem ord: korta mallfrågor ("Vad heter X på engelska?",
+  // "Vad är 3 + 4?") skiljer sig i ett enda ord. Glosor och matematik filtreras aldrig.
+  const long = q => words(q).length >= 5;
+  const similar = it => long(it.q) && taken.some(q => overlap(q, it.q) >= 0.8);
   for (const g of goals) {
     const m = mastery[g.id];
+    const dedupe = g.type !== 'glosa' && g.type !== 'matematik';
     if (onlyOpen && m?.passedMax && m.level >= practiceMax(g, banks[g.id])) continue;
     const bank = (banks[g.id] || []).filter(it => !hasSpellingLure(it));
     const byLevel = {};
@@ -64,9 +69,9 @@ export function pickPrintItems({ goals, banks, mastery, perGoal = 3, onlyOpen = 
         while (next[l] < byLevel[l].length) {
           const it = byLevel[l][next[l]++];
           progress = true;
-          if (it.q && similar(it)) continue;
+          if (dedupe && it.q && similar(it)) continue;
           items.push(it);
-          if (it.q) taken.push(it.q);
+          if (dedupe && it.q && long(it.q)) taken.push(it.q);
           break;
         }
       }

@@ -3,6 +3,7 @@
 // in i dagens minuter, men provläget flyttar inte nivåerna (det är en mätning, inte övning).
 import { withDictation } from './speech.js';
 import { withChars } from './chars.js';
+import { goalLabel } from './booklet.js';
 import { html, useState, useEffect, useRef } from './lib.js';
 import {
   practiceMax, hasSpellingLure, shuffle, gradeLocal, isFree, correctAnswerText, newMastery,
@@ -219,7 +220,7 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
 }
 
 const fmtPts = p => String(Math.round(p * 2) / 2).replace('.', ',');
-export const goalLabel = t => String(t).replace(/^kunna\s+/i, '').replace(/^./, c => c.toUpperCase());
+export { goalLabel };
 
 // Barnets eget svar i genomgången. Felstavningar visas inte igen (de kan fastna).
 function shownAnswer(r, g) {

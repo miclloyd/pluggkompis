@@ -51,3 +51,19 @@ test('samma fråga kommer inte två gånger i häftet, inte heller från olika m
   assert.deepEqual(out[1].items.map(i => i.id), ['f', 'g']);
   assert.ok(overlap('Vad är en horisontlinje?', 'Vad är en gränspunkt?') < 0.8, 'olika begrepp räknas inte som samma fråga');
 });
+
+test('glosor, matematik och korta frågor tas aldrig bort som dubbletter', () => {
+  const q = (id, level, text, kind = 'short') => ({ id, level, kind, q: text });
+  const goals = [{ id: 'a', type: 'glosa' }, { id: 'b', type: 'glosa' }, { id: 'm', type: 'matematik' }, { id: 'n', type: 'matematik' }, { id: 'c', type: 'begrepp' }, { id: 'd', type: 'begrepp' }];
+  const banks = {
+    a: [q('a1', 1, 'Vad heter hund på engelska?')], b: [q('b1', 1, 'Vad heter katt på engelska?')],
+    m: [q('m1', 1, 'Vad är 3 + 4?', 'math')], n: [q('n1', 1, 'Vad är 4 + 3?', 'math')],
+    c: [q('c1', 1, 'Vad är en horisontlinje?')], d: [q('d1', 1, 'Vad är en gränspunkt?')],
+  };
+  const out = pickPrintItems({ goals, banks, mastery: {}, perGoal: 2 });
+  assert.deepEqual(out.map(o => o.items.length), [1, 1, 1, 1, 1, 1]);
+});
+
+test('rubriken blir aldrig tom', () => {
+  assert.equal(goalTopic('Kunna (grodperspektiv)'), '(grodperspektiv)');
+});

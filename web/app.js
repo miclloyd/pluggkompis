@@ -953,6 +953,8 @@ function GoalEditor({ goal, materials, locked, onSave, onSaveText, mastery, bank
   const [g, setG] = useState(goal);
   const [dirty, setDirty] = useState(false);
   const [editText, setEditText] = useState(null); // texten under ändring när målet är låst
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState('');
   useEffect(() => { setG(goal); setDirty(false); setEditText(null); }, [goal]);
   const upd = patch => { setG({ ...g, ...patch }); setDirty(true); };
   const needsNote = !g.enoughMaterial;
@@ -960,6 +962,11 @@ function GoalEditor({ goal, materials, locked, onSave, onSaveText, mastery, bank
   if (locked) {
     // Låst när frågorna finns: bara texten går att ändra, eftersom typ och källor styr frågorna.
     const text = editText?.trim();
+    const saveText = async () => {
+      setSaving(true); setSaveErr('');
+      try { await onSaveText({ ...goal, text }); } catch { setSaveErr('Det gick inte att spara. Försök igen.'); }
+      setSaving(false);
+    };
     return html`<li class="goal locked">
       <div class="goal-top"><span class=${'type t-' + g.type}>${TYPE_LABEL[g.type]}</span><${LevelPips} goal=${g} mastery=${mastery} bank=${bank} /></div>
       ${editText == null
@@ -970,7 +977,8 @@ function GoalEditor({ goal, materials, locked, onSave, onSaveText, mastery, bank
         ${onSaveText && html`<span class="goal-actions">${editText == null
           ? html`<button class="link" onClick=${() => setEditText(g.text)}>Ändra texten</button>`
           : html`<button class="link" onClick=${() => setEditText(null)}>Avbryt</button>
-            <button class="btn primary small" disabled=${!text || text === g.text} onClick=${() => onSaveText({ ...goal, text })}>Spara</button>`}</span>`}</div>
+            <button class="btn primary small" disabled=${!text || text === g.text || saving} onClick=${saveText}>Spara</button>`}</span>`}</div>
+      ${saveErr && html`<p class="notice bad">${saveErr}</p>`}
     </li>`;
   }
   return html`<li class=${'goal' + (needsNote && !g.parentNote ? ' attention' : '')}>
