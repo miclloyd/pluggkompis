@@ -1579,7 +1579,8 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
           ? result.recheck !== 'up' && html`<span class="small muted">${result.recheck === 'same' ? 'Rättningen stod sig. ' : ''}Förälder får titta på det.</span>`
           : item.kind !== 'math' && html`<button class="btn ghost small" onClick=${onDispute}>Jag tycker jag hade rätt</button>`)}
       ${blocked && html`<button class="link small" onClick=${() => setSkipped(true)}>Hoppa över övningen</button>`}
-      <button ref=${ref} class=${'btn primary' + (ready ? '' : ' wait')} style=${`--wait: ${readMs}ms`} disabled=${!!result.rechecking || blocked || !ready} onClick=${onNext}>Nästa</button>
+      <button ref=${ref} class=${'btn primary' + (ready ? '' : ' wait')} style=${`--wait: ${readMs}ms`} disabled=${!!result.rechecking || blocked || !ready} aria-describedby=${ready ? null : 'fb-wait'} onClick=${onNext}>Nästa</button>
+      ${!ready && html`<span id="fb-wait" class="visually-hidden">Läs kommentaren först. Knappen blir klickbar om en liten stund.</span>`}
     </div>
   </section>`;
 }

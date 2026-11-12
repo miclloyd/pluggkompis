@@ -72,18 +72,25 @@ export function withDictation(goals, banks) {
 
 export function SpeakButton({ text, lang = 'sv', label = 'Läs upp' }) {
   const [state, setState] = useState('idle'); // idle | speaking | silent
-  const live = useRef(true);
-  useEffect(() => () => { live.current = false; }, []);
-  useEffect(() => { setState('idle'); }, [text]);
+  const cur = useRef(null); // knappens egen uppläsning: återanrop från en äldre ignoreras
+  const stopMine = () => { if (cur.current && speak.current === cur.current) stopSpeaking(); cur.current = null; };
+  // Ny text eller knappen försvinner (nästa fråga): sluta läsa upp det gamla.
+  useEffect(() => { setState('idle'); return stopMine; }, [text]);
   if (!canSpeak()) return null;
-  const set = v => live.current && setState(v);
   function press() {
-    if (state === 'speaking') { stopSpeaking(); set('idle'); return; }
-    set('speaking');
-    speak(text, lang, 0.9, { onStart: () => set('speaking'), onEnd: () => setState(s => (s === 'silent' ? s : 'idle')), onSilent: () => set('silent') });
+    if (state === 'speaking') { stopMine(); setState('idle'); return; }
+    setState('speaking');
+    let u = null;
+    const mine = f => () => { if (u && cur.current === u) f(); };
+    u = speak(text, lang, 0.9, {
+      onStart: mine(() => setState('speaking')),
+      onEnd: mine(() => setState(s => (s === 'silent' ? s : 'idle'))),
+      onSilent: mine(() => setState('silent')),
+    });
+    cur.current = u;
   }
   return html`<span class="speak-wrap"><button type="button" class=${'btn ghost small speak' + (state === 'speaking' ? ' on' : '')} onClick=${press}
-      aria-label=${state === 'speaking' ? 'Sluta läsa upp' : label} aria-pressed=${state === 'speaking'}>${state === 'speaking' ? '⏹ Läser upp…' : `🔊 ${label}`}</button>
+      aria-label=${state === 'speaking' ? 'Sluta läsa upp' : label}>${state === 'speaking' ? '⏹ Läser upp…' : `🔊 ${label}`}</button>
     ${state === 'silent' && html`<span class="small muted speak-hint" role="status">Hör du inget? Stäng av ljudlöst läge och höj volymen.</span>`}</span>`;
 }
 
