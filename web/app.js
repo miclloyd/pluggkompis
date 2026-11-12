@@ -1463,7 +1463,7 @@ function Mcq({ item, disabled, onAnswer, result }) {
     <div class="options">${order.map(i => {
       let cls = 'option';
       if (result) { if (i === item.answer) cls += ' is-right'; else if (i === result.given) cls += ' is-wrong'; }
-      return html`<button class=${cls} disabled=${disabled} onClick=${() => onAnswer(i)}>${item.options[i]}</button>`;
+      return html`<button key=${item.id + ':' + i} class=${cls} disabled=${disabled} onClick=${() => onAnswer(i)}>${item.options[i]}</button>`;
     })}</div>`;
 }
 
