@@ -27,7 +27,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-var version = "0.15.1"
+var version = "0.16.0"
 
 // User: ett Tailscale-konto som får använda appen. Devices (stable ID) är
 // valfritt; anges det måste även enheten stämma. Det behövs för den förälder som
@@ -117,8 +117,15 @@ func main() {
 	lanHost := flag.String("lan-host", "", "LAN-namnet, t.ex. plugg.example.se (krävs med -lan-addr)")
 	lanCert := flag.String("lan-cert", "", "certifikat (PEM, fullchain) för LAN-namnet")
 	lanKey := flag.String("lan-key", "", "nyckel (PEM) för LAN-certifikatet")
+	priceRefresh := flag.Bool("price-refresh", true, "hämta AI-priser och växelkurs en gång i veckan (av med -dev om inte satt)")
 	devAs := flag.String("dev-as", "parent", "dev-identitetens roll: parent | child (barnet heter devbarn)")
 	flag.Parse()
+	if *dev != "" {
+		// Lokalt hämtas priserna bara om flaggan sätts uttryckligen.
+		explicit := false
+		flag.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "price-refresh" })
+		*priceRefresh = *priceRefresh && explicit
+	}
 
 	index, err := serverIndex()
 	if err != nil {
@@ -192,6 +199,9 @@ func main() {
 		}
 		log.Printf("AI: %s/%s/%s, tak %d per barn och dag, %d per prov",
 			a.ai.models.Quick, a.ai.models.Default, a.ai.models.Complex, a.ai.limits.ChildPerDay, a.ai.limits.PerTest)
+		if *priceRefresh {
+			go a.ai.prices.run(context.Background())
+		}
 	}
 
 	if *dev != "" {

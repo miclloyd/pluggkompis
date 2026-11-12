@@ -62,6 +62,7 @@ type AI struct {
 	client *http.Client
 	db     *sql.DB
 	now    func() time.Time
+	prices *pricer
 }
 
 func newAI(st *Store, key string, models Models, limits Limits) (*AI, error) {
@@ -102,11 +103,34 @@ CREATE TABLE IF NOT EXISTS ai_log (
 			_, err = st.db.Exec(`ALTER TABLE ai_log ADD COLUMN detail TEXT NOT NULL DEFAULT ''`)
 		}
 	}
-	return &AI{
+	if err == nil {
+		// Kostnad per anrop i dollar kom till i 0.16.0. NULL = okänd (modell utan pris).
+		var n int
+		st.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ai_log') WHERE name = 'cost_in'`).Scan(&n)
+		if n == 0 {
+			if _, err = st.db.Exec(`ALTER TABLE ai_log ADD COLUMN cost_in REAL`); err == nil {
+				_, err = st.db.Exec(`ALTER TABLE ai_log ADD COLUMN cost_out REAL`)
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	a := &AI{
 		key: key, url: anthropicURL, models: models, limits: limits,
 		client: &http.Client{Timeout: 5 * time.Minute},
 		db:     st.db, now: st.now,
-	}, err
+	}
+	used := []string{models.Quick}
+	for _, m := range []string{models.Default, models.Complex} {
+		if m != used[len(used)-1] && m != used[0] {
+			used = append(used, m)
+		}
+	}
+	if a.prices, err = newPricer(st.db, st.now, used); err != nil {
+		return nil, err
+	}
+	return a, a.prices.backfill()
 }
 
 // reserve räknar upp hinken om taket inte är nått, i en enda sats (samtidiga
@@ -126,8 +150,16 @@ func (a *AI) logCall(bucket, tier, model, status string, in, out int, detail ...
 	if len(detail) > 0 {
 		d = detail[0]
 	}
-	_, err := a.db.Exec(`INSERT INTO ai_log (ts, bucket, tier, model, status, input_tokens, output_tokens, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.now().UnixMilli(), bucket, tier, model, status, in, out, d)
+	var ci, co any // NULL när modellen saknar pris
+	if in == 0 && out == 0 {
+		ci, co = 0.0, 0.0
+	} else if a.prices != nil {
+		if x, y, ok := a.prices.cost(model, in, out); ok {
+			ci, co = x, y
+		}
+	}
+	_, err := a.db.Exec(`INSERT INTO ai_log (ts, bucket, tier, model, status, input_tokens, output_tokens, detail, cost_in, cost_out) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.now().UnixMilli(), bucket, tier, model, status, in, out, d, ci, co)
 	if err != nil {
 		log.Printf("ai_log: %v", err)
 	}
@@ -499,16 +531,19 @@ func readImages(files []*multipart.FileHeader) ([]image, *aiError) {
 // ── /api/usage: förbrukningen för föräldraläget ──────────────────────────────
 
 type usageRow struct {
-	Kind      string `json:"kind"` // child | build | task
-	ProfileID string `json:"profileId,omitempty"`
-	TestID    string `json:"testId,omitempty"`
-	TaskID    string `json:"taskId,omitempty"`
-	Date      string `json:"date,omitempty"` // svensk dag (bara child)
-	Calls     int    `json:"calls"`          // anrop till Anthropic
-	Failed    int    `json:"failed"`         // varav fel
-	Limited   int    `json:"limited"`        // stoppade av taket
-	In        int    `json:"inputTokens"`
-	Out       int    `json:"outputTokens"`
+	Kind      string  `json:"kind"` // child | build | task
+	ProfileID string  `json:"profileId,omitempty"`
+	TestID    string  `json:"testId,omitempty"`
+	TaskID    string  `json:"taskId,omitempty"`
+	Date      string  `json:"date,omitempty"` // svensk dag (bara child)
+	Calls     int     `json:"calls"`          // anrop till Anthropic
+	Failed    int     `json:"failed"`         // varav fel
+	Limited   int     `json:"limited"`        // stoppade av taket
+	In        int     `json:"inputTokens"`
+	Out       int     `json:"outputTokens"`
+	CostIn    float64 `json:"costIn"`   // dollar
+	CostOut   float64 `json:"costOut"`  // dollar
+	Unpriced  int     `json:"unpriced"` // anrop utan känt pris
 }
 
 // usage: de senaste 30 dagarna, per barn och dag och per prov.
@@ -524,7 +559,8 @@ func (s *server) usage(w http.ResponseWriter, r *http.Request) {
 	since := s.ai.now().Add(-30 * 24 * time.Hour).UnixMilli()
 	rows, err := s.ai.db.QueryContext(r.Context(), `SELECT bucket,
   COALESCE(SUM(status <> 'limit'), 0), COALESCE(SUM(status NOT IN ('ok', 'limit')), 0), COALESCE(SUM(status = 'limit'), 0),
-  COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
+  COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+  COALESCE(SUM(cost_in), 0), COALESCE(SUM(cost_out), 0), COALESCE(SUM(cost_in IS NULL), 0)
 FROM ai_log WHERE ts >= ? GROUP BY bucket ORDER BY bucket`, since)
 	if err != nil {
 		storeError(w, err)
@@ -535,7 +571,7 @@ FROM ai_log WHERE ts >= ? GROUP BY bucket ORDER BY bucket`, since)
 	for rows.Next() {
 		var b string
 		var u usageRow
-		if err := rows.Scan(&b, &u.Calls, &u.Failed, &u.Limited, &u.In, &u.Out); err != nil {
+		if err := rows.Scan(&b, &u.Calls, &u.Failed, &u.Limited, &u.In, &u.Out, &u.CostIn, &u.CostOut, &u.Unpriced); err != nil {
 			storeError(w, err)
 			return
 		}
@@ -570,8 +606,43 @@ FROM ai_log WHERE ts >= ? GROUP BY bucket ORDER BY bucket`, since)
 		}
 		er.Close()
 	}
+	// Summor per period och modell (dollar): i dag, denna månad och 30 dagar.
+	type costRow struct {
+		Period   string  `json:"period"`
+		Model    string  `json:"model"`
+		In       int     `json:"inputTokens"`
+		Out      int     `json:"outputTokens"`
+		CostIn   float64 `json:"costIn"`
+		CostOut  float64 `json:"costOut"`
+		Unpriced int     `json:"unpriced"`
+	}
+	now := s.ai.now().In(stockholm)
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, stockholm).UnixMilli()
+	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, stockholm).UnixMilli()
+	totals := []costRow{}
+	for _, per := range []struct {
+		name string
+		from int64
+	}{{"today", day}, {"month", month}, {"30d", since}} {
+		cr, err := s.ai.db.QueryContext(r.Context(), `SELECT model, COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+  COALESCE(SUM(cost_in), 0), COALESCE(SUM(cost_out), 0), COALESCE(SUM(cost_in IS NULL), 0)
+FROM ai_log WHERE ts >= ? AND model <> '' GROUP BY model ORDER BY model`, per.from)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		for cr.Next() {
+			x := costRow{Period: per.name}
+			if cr.Scan(&x.Model, &x.In, &x.Out, &x.CostIn, &x.CostOut, &x.Unpriced) == nil {
+				totals = append(totals, x)
+			}
+		}
+		cr.Close()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": true,
+		"totals":  totals,
+		"pricing": s.ai.prices.info(),
 		"errors":  recent,
 		"today":   s.ai.now().In(stockholm).Format("2006-01-02"),
 		"limits":  s.ai.limits,
@@ -677,4 +748,27 @@ func (a *AI) stream(w http.ResponseWriter, ctx context.Context, bucket, tier, mo
 		enc.Encode(map[string]any{"done": true, "truncated": stop == "max_tokens"})
 	}
 	a.logCall(bucket, tier, model, status, in, out)
+}
+
+// refreshPrices: föräldern hämtar priser och växelkurs nu i stället för att vänta en vecka.
+// Högst en gång per tio minuter, annars skickas de sparade värdena.
+func (s *server) refreshPrices(w http.ResponseWriter, r *http.Request) {
+	if !s.parentMode(r) {
+		accessError(w, errLocked)
+		return
+	}
+	if s.ai == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+		return
+	}
+	p := s.ai.prices
+	p.mu.Lock()
+	recent := p.now().Sub(p.checked) < 10*time.Minute
+	p.mu.Unlock()
+	if !recent {
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		_ = p.refresh(ctx) // felet syns i info()
+	}
+	writeJSON(w, http.StatusOK, p.info())
 }

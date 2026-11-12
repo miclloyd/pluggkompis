@@ -338,6 +338,7 @@ const AI_ERROR_TEXT = {
 function AiUsage({ env, profiles, tests }) {
   const [u, setU] = useState(null);
   const [err, setErr] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   useEffect(() => { env.usage().then(setU).catch(e => setErr(errText(e))); }, []);
   if (err) return html`<section class="block"><h2>AI-användning</h2><p class="notice bad">${err}</p></section>`;
   if (!u) return null;
@@ -345,28 +346,69 @@ function AiUsage({ env, profiles, tests }) {
   const days = [...Array(7)].map((_, i) => { const d = new Date(u.today + 'T12:00:00'); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); });
   const child = u.rows.filter(r => r.kind === 'child');
   const build = u.rows.filter(r => r.kind === 'build');
-  const sum = (rows, k) => rows.reduce((a, r) => a + r[k], 0);
+  const sum = (rows, k) => rows.reduce((a, r) => a + (r[k] || 0), 0);
   const name = id => profiles.find(p => p.id === id)?.name || 'Borttagen profil';
   const subject = id => tests.find(t => t.id === id)?.subject || 'Borttaget prov';
   const tok = n => n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : n >= 1e3 ? `${Math.round(n / 1e3)} k` : String(n);
+  const pr = u.pricing || { sek: 0, prices: {} };
+  // Dollar till kronor med ECB-kursen. Under en krona visas öre.
+  const kr = usd => {
+    const v = usd * pr.sek;
+    if (v > 0 && v < 0.01) return '< 0,01 kr';
+    return v.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' kr';
+  };
+  const usd = n => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
+  const cost = rows => sum(rows, 'costIn') + sum(rows, 'costOut');
+  const date = ms => ms > 0 ? new Date(ms).toLocaleDateString('sv-SE') : 'aldrig';
+  const per = p => (u.totals || []).filter(t => t.period === p);
+  const modelName = m => m.replace(/^claude-/, '').replace(/-(\d+)-(\d+)$/, ' $1.$2').replace(/^./, c => c.toUpperCase());
+  const unpriced = sum(per('30d'), 'unpriced');
   const ids = [...new Set(child.map(r => r.profileId))];
+  async function refresh() {
+    setRefreshing(true);
+    try { const info = await env.refreshPrices(); setU(x => ({ ...x, pricing: info })); } catch (e) { setErr(errText(e)); }
+    setRefreshing(false);
+  }
   return html`<section class="block">
     <h2>AI-användning</h2>
-    <p class="hint">Antal anrop till Claude. Barnet: högst ${u.limits.childPerDay} per dag. Ett prov: högst ${u.limits.perTest} när det byggs. Kostnaden syns i Anthropic Console.</p>
+    <p class="hint">Barnet: högst ${u.limits.childPerDay} anrop per dag. Ett prov: högst ${u.limits.perTest} när det byggs. Kostnaden är räknad på Anthropics priser och dagens växelkurs; den exakta summan finns i Anthropic Console.</p>
+    <div class="cost-sum">
+      ${[['today', 'I dag'], ['month', 'Denna månad'], ['30d', '30 dagar']].map(([p, l]) => { const rs = per(p); return html`<div>
+        <span class="small muted">${l}</span><strong>${kr(cost(rs))}</strong>
+        <span class="small muted">in ${kr(sum(rs, 'costIn'))}</span><span class="small muted">ut ${kr(sum(rs, 'costOut'))}</span></div>`; })}
+    </div>
+    ${per('month').length > 0 && html`<div class="table-scroll"><table class="usage">
+      <thead><tr><th>Denna månad</th><th>Input</th><th>Output</th><th>Kostnad</th></tr></thead>
+      <tbody>${per('month').map(t => html`<tr><td>${modelName(t.model)}</td>
+        <td>${kr(t.costIn)}<br /><span class="muted small">${tok(t.inputTokens)} tokens</span></td><td>${kr(t.costOut)}<br /><span class="muted small">${tok(t.outputTokens)} tokens</span></td><td>${kr(t.costIn + t.costOut)}</td></tr>`)}</tbody>
+    </table></div>`}
+    ${unpriced > 0 && html`<p class="notice warn small">${unpriced} anrop gick till en modell utan känt pris och är inte medräknade.</p>`}
     ${!u.rows.length && html`<p class="empty">Inga AI-anrop de senaste 30 dagarna.</p>`}
-    ${ids.length > 0 && html`<table class="usage">
+    ${ids.length > 0 && html`<div class="table-scroll"><table class="usage">
       <thead><tr><th>Barn</th>${days.map(d => html`<th>${d === u.today ? 'I dag' : d.slice(5)}</th>`)}<th>30 dagar</th></tr></thead>
       <tbody>${ids.map(id => { const rs = child.filter(r => r.profileId === id); return html`<tr>
         <td>${name(id)}</td>
         ${days.map(d => { const r = rs.find(x => x.date === d); return html`<td class=${r?.limited ? 'warn' : ''}>${r ? r.calls : '–'}</td>`; })}
-        <td>${sum(rs, 'calls')} anrop · ${tok(sum(rs, 'inputTokens') + sum(rs, 'outputTokens'))} tokens</td></tr>`; })}</tbody>
-    </table>`}
-    ${build.length > 0 && html`<table class="usage">
-      <thead><tr><th>Prov</th><th>Anrop</th><th>Tokens</th></tr></thead>
-      <tbody>${build.map(r => html`<tr><td>${subject(r.testId)}</td><td>${r.calls} av ${u.limits.perTest}</td><td>${tok(r.inputTokens + r.outputTokens)}</td></tr>`)}</tbody>
-    </table>`}
+        <td>${sum(rs, 'calls')} anrop · ${kr(cost(rs))}</td></tr>`; })}</tbody>
+    </table></div>`}
+    ${build.length > 0 && html`<div class="table-scroll"><table class="usage">
+      <thead><tr><th>Prov</th><th>Anrop</th><th>Tokens</th><th>Kostnad</th></tr></thead>
+      <tbody>${build.map(r => html`<tr><td>${subject(r.testId)}</td><td>${r.calls} av ${u.limits.perTest}</td><td>${tok(r.inputTokens + r.outputTokens)}</td><td>${kr(r.costIn + r.costOut)}</td></tr>`)}</tbody>
+    </table></div>`}
     ${sum(u.rows, 'limited') > 0 && html`<p class="small">Taket nåddes ${sum(u.rows, 'limited')} gånger (markerat).</p>`}
     ${sum(u.rows, 'failed') > 0 && html`<p class="small">${sum(u.rows, 'failed')} anrop gav fel.</p>`}
+    ${pr.error && html`<p class="notice warn small">Priserna kunde inte uppdateras senast (${pr.error}). De förra gäller tills vidare.</p>`}
+    <details class="small"><summary>Priser och växelkurs</summary>
+      <div class="table-scroll"><table class="usage">
+        <thead><tr><th>Modell</th><th>Input</th><th>Output</th></tr></thead>
+        <tbody>${Object.entries(pr.prices || {}).map(([m, p]) => html`<tr><td>${modelName(m)}</td>
+          <td>${usd(p.in)}${p.longOver ? html`<br /><span class="muted">${usd(p.longIn)} över ${tok(p.longOver)}</span>` : ''}</td>
+          <td>${usd(p.out)}${p.longOver ? html`<br /><span class="muted">${usd(p.longOut)} över ${tok(p.longOver)}</span>` : ''}</td></tr>`)}</tbody>
+      </table></div>
+      <p>Dollar per miljon tokens, hämtade ${date(pr.pricesAt)}. 1 dollar = ${pr.sek.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kr (ECB ${date(pr.sekAt)}). Kontrolleras en gång i veckan, senast ${date(pr.checked)}.</p>
+      ${pr.changes?.length > 0 && html`<p><strong>Prisändringar:</strong></p><ul>${pr.changes.map(c => html`<li>${date(c.ts)}: ${modelName(c.model)} ${c.what}</li>`)}</ul>`}
+      ${env.refreshPrices && html`<button class="btn ghost small" disabled=${refreshing} onClick=${refresh}>${refreshing ? 'Hämtar…' : 'Uppdatera nu'}</button>`}
+    </details>
     ${u.errors?.length > 0 && html`<details class="small"><summary>Senaste felen</summary><ul>${u.errors.map(e => html`<li>${new Date(e.ts).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' })}: ${AI_ERROR_TEXT[e.status] || e.status}${e.model ? ` (${e.model})` : ''}${e.detail ? html`<br /><code class="small">${e.detail}</code>` : ''}</li>`)}</ul></details>`}
   </section>`;
 }

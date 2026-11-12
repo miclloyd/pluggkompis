@@ -151,6 +151,7 @@ func (a *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/ai", a.limitHeavy(a.aiHandler))
 	if !a.lan {
 		mux.HandleFunc("GET /api/usage", a.usage)
+		mux.HandleFunc("POST /api/usage/prices", a.refreshPrices)
 	}
 	mux.HandleFunc("POST /api/files", a.limitHeavy(a.filePut))
 	mux.HandleFunc("GET /api/files/{id}", a.limitHeavy(a.fileGet))

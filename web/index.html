@@ -731,6 +731,11 @@ table.usage { width: 100%; border-collapse: collapse; margin: 10px 0; font-size:
 table.usage th, table.usage td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line, #dde3ee); }
 table.usage th { font-weight: 700; color: var(--ink-2); }
 table.usage td.warn { color: var(--bad, #b23a47); font-weight: 700; }
+.cost-sum { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-scroll table.usage th, .table-scroll table.usage td { white-space: nowrap; }
+.cost-sum > div { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; min-width: 0; border: 1px solid var(--line, #dde3ee); border-radius: 12px; }
+.cost-sum strong { font-size: 1.1rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 </style>
 
 <div id="app"></div>

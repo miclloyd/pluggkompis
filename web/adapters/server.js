@@ -90,6 +90,7 @@ export async function createServerAdapters(config) {
     save,
     // AI-förbrukningen per barn och prov (bara upplåst föräldraläge).
     usage: () => call('GET', '/api/usage'),
+    refreshPrices: () => call('POST', '/api/usage/prices'),
     // PIN och roll sköts av servern (auth.js beskriver gränssnittet).
     // Skoldatorer på hemnätet (LAN): barnets inloggning, och förälderns hantering via tailnätet.
     lan: {
