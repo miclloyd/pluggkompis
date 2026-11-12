@@ -268,7 +268,7 @@ func anthropicError(status int, typ, message string) *aiError {
 	case status == 400 && strings.Contains(m, "image"):
 		return &aiError{400, "image_rejected", "En sidbild kunde inte skickas. Prova att ladda upp filen igen."}
 	case status == 400:
-		return &aiError{502, "invalid_request", "Anthropic avvisade anropet. Försök igen; händer det igen, titta under AI-användning."}
+		return &aiError{502, "invalid_request", "Anthropic avvisade anropet. Försök igen; händer det igen, säg till en förälder."}
 	}
 	return &aiError{502, "upstream_error", "Något gick fel hos Claude. Försök igen om en stund."}
 }
