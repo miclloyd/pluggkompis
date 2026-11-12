@@ -507,6 +507,13 @@ func TestDeviceScopedTestAccount(t *testing.T) {
 	if w := do(h, ws, "POST", "/api/auth/unlock", `{"pin":"1234"}`); w.Code != 403 {
 		t.Errorf("workstationen låser upp föräldraläget: %d", w.Code)
 	}
+	// Även med telefonens upplåsta kaka (samma login) är workstationen ett barn.
+	if w := doC(h, ws, "GET", "/api/store/profiles/p1", "", pc); w.Code != 403 {
+		t.Errorf("workstationen med förälderns kaka: %d", w.Code)
+	}
+	if w := doC(h, ws, "PUT", "/api/store/tests/t1/goals/gx", `{}`, pc); w.Code != 403 {
+		t.Errorf("workstationen skriver med förälderns kaka: %d", w.Code)
+	}
 	// Telefonen är fortfarande förälder.
 	if got := ids(t, do(h, parent, "GET", "/api/store/profiles?list=1", "").Body.String()); got != "p1,p2,p3,pt" {
 		t.Errorf("telefonen ser: %q", got)
