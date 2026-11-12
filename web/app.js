@@ -641,6 +641,24 @@ function TestSetup({ env, go, testId }) {
     if (short.length) setInfo(`Färre frågor än vanligt för: ${short.join('; ')}.`);
   });
 
+  // Ett mål som läggs till när frågorna redan finns: frågorna skapas direkt, bara för det målet.
+  // Blir det inga frågor tas målet bort igen, så att barnet aldrig får ett mål utan frågor.
+  const addLateGoal = g => run('Lägger till målet och skapar frågor', async () => {
+    const goal = { ...g, approved: true, order: goals.length };
+    await repo.saveGoal(testId, goal);
+    try {
+      const r = await buildBank({ ai: env.ai, repo, test, goals: [goal], materials, existing: {}, onProgress: setBankProg });
+      const fresh = await repo.listBanks(testId);
+      const r2 = await buildHighBank({ ai: env.ai, repo, test, goals: [goal], materials, existing: fresh, onProgress: setBankProg });
+      const after = await repo.listBanks(testId);
+      if (!(after[goal.id] || []).length) throw new StepError('Inga frågor kunde skapas för målet. Kontrollera sidorna eller skriv underlaget själv.');
+      if ([...r.short, ...r2.short].length) setInfo(`Färre frågor än vanligt för: ${goal.text}.`);
+    } catch (e) {
+      await repo.saveGoal(testId, { ...goal, removed: true });
+      throw e;
+    } finally { setBankProg(null); }
+  });
+
   const missingSort = activeGoals.filter(g => g.type === 'samband' && !(banks[g.id] || []).some(i => i.kind === 'sort'));
   const makeSort = () => run('Skapar sorteringsövningar', async () => {
     const r = await buildSortBank({ ai: env.ai, repo, test, goals: activeGoals, materials, existing: banks, onProgress: setBankProg });
@@ -717,6 +735,7 @@ function TestSetup({ env, go, testId }) {
             ${test.outOfScope?.length > 0 && html`<div class="oos"><strong>Ingår inte i provet:</strong> ${test.outOfScope.join(' · ')}</div>`}
             <ul class="goals">${activeGoals.map(g => html`<${GoalEditor} key=${g.id} goal=${g} materials=${materials} locked=${true} mastery=${mastery[g.id]} bank=${banks[g.id]} onSave=${() => {}}
               onSaveText=${!busy && (async ng => { await repo.saveGoal(testId, ng); reload(); })} />`)}</ul>
+            ${!busy && html`<${AddGoal} materials=${materials} late onAdd=${addLateGoal} />`}
             <${BankPreview} goals=${activeGoals} banks=${banks} materials=${materials} onDelete=${async (gid, iid) => { await repo.saveBank(testId, gid, banks[gid].filter(i => i.id !== iid)); reload(); }} />
           </section>`}
         ${tab === 'material' && html`
@@ -759,7 +778,9 @@ function TestSetup({ env, go, testId }) {
             mastery=${mastery[g.id]} bank=${banks[g.id]} onSave=${async ng => { await repo.saveGoal(testId, ng); reload(); }}
             onSaveText=${ready && !busy && (async ng => { await repo.saveGoal(testId, ng); reload(); })} />`)}
       </ul>
-      ${activeGoals.length > 0 && !ready && html`<${AddGoal} materials=${materials} onAdd=${async g => { await repo.saveGoal(testId, { ...g, order: goals.length }); reload(); }} />`}
+      ${activeGoals.length > 0 && (ready
+        ? !busy && html`<${AddGoal} materials=${materials} late onAdd=${addLateGoal} />`
+        : html`<${AddGoal} materials=${materials} onAdd=${async g => { await repo.saveGoal(testId, { ...g, order: goals.length }); reload(); }} />`)}
     </section>
 
     <section class="block">
@@ -1048,23 +1069,53 @@ function GoalEditor({ goal, materials, locked, onSave, onSaveText, mastery, bank
   </li>`;
 }
 
-function AddGoal({ materials, onAdd }) {
+// Sidor ur "2-3, 5" (tom = alla sidor i filen); bara sidor som finns.
+function parsePages(txt, pages) {
+  const have = new Set(pages.map(p => p.p));
+  if (!String(txt).trim()) return [...have];
+  const out = new Set();
+  for (const part of String(txt).split(/[,; ]+/).filter(Boolean)) {
+    const [a, b] = part.split(/[-–]/).map(Number);
+    for (let p = a; p <= (b || a); p++) if (have.has(p)) out.add(p);
+  }
+  return [...out].sort((x, y) => x - y);
+}
+
+function AddGoal({ materials, onAdd, late }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [type, setType] = useState('fakta');
   const [skill, setSkill] = useState('');
   const [note, setNote] = useState('');
+  const [mref, setMref] = useState(materials[0]?.ref || '');
+  const [pages, setPages] = useState('');
   if (!open) return html`<button class="btn ghost" onClick=${() => setOpen(true)}>Lägg till eget mål</button>`;
-  const first = materials[0];
+  const mat = materials.find(m => m.ref === mref);
+  const chosen = mat ? parsePages(pages, mat.pages || []) : [];
+  const sources = chosen.map(p => ({ m: mat.ref, p }));
+  const ok = text.trim() && (type !== 'matematik' || skill) && (sources.length || note.trim());
+  const add = () => {
+    onAdd({ id: 'g' + uid(), text: text.trim(), type, ...(type === 'matematik' ? { skill } : {}), weight: 2, sources,
+      enoughMaterial: !!note.trim() || sources.length > 0, parentNote: note.trim(), note: '', approved: false, removed: false });
+    setOpen(false); setText(''); setNote(''); setPages('');
+  };
   return html`<div class="sheet form inset">
     <label for="ag-text">Lärandemål</label><input id="ag-text" placeholder="Kunna ..." value=${text} onInput=${e => setText(e.target.value)} />
+    <p class="hint">Barnet ser målet, så skriv inte svaret i det.</p>
     <label for="ag-type">Typ</label><select id="ag-type" value=${type} onChange=${e => setType(e.target.value)}>${GOAL_TYPES.filter(t => t !== 'glosa').map(t => html`<option value=${t}>${TYPE_LABEL[t]}</option>`)}</select>
     ${type === 'matematik' && html`<label for="ag-skill">Färdighet</label><select id="ag-skill" value=${skill} onChange=${e => setSkill(e.target.value)}>
       <option value="">Välj färdighet</option>${Object.entries(SKILLS).map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select>
       <p class="hint">Uppgifterna och facit räknas fram av programmet, inte av AI.</p>`}
+    ${materials.length > 0 && html`<div class="row2">
+      <div><label for="ag-mat">Var står det?</label><select id="ag-mat" value=${mref} onChange=${e => setMref(e.target.value)}>
+        ${materials.map(m => html`<option value=${m.ref}>${m.name}</option>`)}</select></div>
+      <div><label for="ag-pages">Sidor</label><input id="ag-pages" inputmode="numeric" placeholder="t.ex. 2–3 (tomt = alla)" value=${pages} onInput=${e => setPages(e.target.value)} /></div>
+    </div>
+    <p class="hint">${chosen.length ? `Frågorna skapas ur ${chosen.length === (mat?.pages || []).length ? 'hela filen' : `sida ${chosen.join(', ')}`}.` : 'Inga sådana sidor i filen.'}</p>`}
     <label for="ag-note">Underlag (valfritt)</label><textarea id="ag-note" rows="2" placeholder="Om svaret inte står i materialet, skriv det här" value=${note} onInput=${e => setNote(e.target.value)}></textarea>
+    ${late && html`<p class="hint">Frågorna skapas direkt när du lägger till målet. Befintliga frågor och barnets framsteg påverkas inte.</p>`}
     <div class="actions"><button class="btn ghost" onClick=${() => setOpen(false)}>Avbryt</button>
-      <button class="btn primary" disabled=${!text.trim() || (type === 'matematik' && !skill)} onClick=${() => { onAdd({ id: 'g' + uid(), text: text.trim(), type, ...(type === 'matematik' ? { skill } : {}), weight: 2, sources: first ? [{ m: first.ref, p: 1 }] : [], enoughMaterial: !!note.trim() || !!first, parentNote: note.trim(), note: '', approved: false, removed: false }); setOpen(false); setText(''); setNote(''); }}>Lägg till</button></div>
+      <button class="btn primary" disabled=${!ok} onClick=${add}>${late ? 'Lägg till och skapa frågor' : 'Lägg till'}</button></div>
   </div>`;
 }
 
