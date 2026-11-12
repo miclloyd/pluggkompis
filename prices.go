@@ -76,6 +76,8 @@ type pricer struct {
 	sekAt    time.Time // ECB:s datum för kursen
 	checked  time.Time // senaste försöket
 	lastErr  string
+	busy     bool // en hämtning pågår
+	Enabled  bool // false: ingen hämtning alls (lokal utveckling utan -price-refresh)
 	changes  []priceChange
 }
 
@@ -86,7 +88,15 @@ type priceChange struct {
 }
 
 func newPricer(db *sql.DB, now func() time.Time, models []string) (*pricer, error) {
-	p := &pricer{db: db, now: now, client: &http.Client{Timeout: 30 * time.Second},
+	client := &http.Client{Timeout: 30 * time.Second,
+		// Omdirigeringar bara till https på samma värd.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 || req.URL.Scheme != "https" || req.URL.Host != via[0].URL.Host {
+				return errors.New("omdirigering till annan värd")
+			}
+			return nil
+		}}
+	p := &pricer{db: db, now: now, client: client,
 		pricesURL: pricesURL, fxURL: fxURL, models: models}
 	_, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS ai_prices (
@@ -179,14 +189,19 @@ func (p *pricer) cost(model string, in, out int) (ci, co float64, known bool) {
 	return ci, co, true
 }
 
-// run kontrollerar varje timme om det gått en vecka sedan senaste försöket.
+// run kontrollerar varje timme om det gått en vecka sedan senaste försöket, eller sex
+// timmar om det försöket misslyckades.
 func (p *pricer) run(ctx context.Context) {
 	for {
 		p.mu.Lock()
-		due := p.now().Sub(p.checked) >= priceInterval
+		wait := priceInterval
+		if p.lastErr != "" {
+			wait = 6 * time.Hour
+		}
+		due := p.now().Sub(p.checked) >= wait
 		p.mu.Unlock()
 		if due {
-			if err := p.refresh(ctx); err != nil {
+			if err := p.refresh(ctx, false); err != nil {
 				log.Printf("priser: %v", err)
 			}
 		}
@@ -198,11 +213,39 @@ func (p *pricer) run(ctx context.Context) {
 	}
 }
 
+var errBusy = errors.New("en hämtning pågår redan")
+
+// maxJump: ett pris som ändras mer än så (upp eller ner) tas inte in automatiskt. Föräldern
+// bekräftar med Uppdatera nu (force) efter att ha kontrollerat Anthropics prissida.
+const maxJump = 3.0
+
+func jumped(a, b float64) bool { return a > 0 && b > 0 && (b/a > maxJump || a/b > maxJump) }
+
 // refresh hämtar priser och växelkurs. Delarna sparas var för sig: en trasig prissida
 // stoppar inte en ny växelkurs och tvärtom.
-func (p *pricer) refresh(ctx context.Context) error {
+func (p *pricer) refresh(ctx context.Context, force bool) error {
+	p.mu.Lock()
+	if p.busy {
+		p.mu.Unlock()
+		return errBusy
+	}
+	p.busy = true
+	p.mu.Unlock()
+	defer func() { p.mu.Lock(); p.busy = false; p.mu.Unlock() }()
+
 	var errs []string
 	prices, perr := p.fetchPrices(ctx)
+	if perr == nil && !force {
+		p.mu.Lock()
+		for _, m := range sortedKeys(prices) {
+			o, n := p.prices[m], prices[m]
+			if jumped(o.In, n.In) || jumped(o.Out, n.Out) || jumped(o.LongIn, n.LongIn) || jumped(o.LongOut, n.LongOut) {
+				perr = fmt.Errorf("%s ändras mer än %g gånger (%s); kontrollera Anthropics prissida och tryck Uppdatera nu", m, maxJump, describeChange(o, n))
+				break
+			}
+		}
+		p.mu.Unlock()
+	}
 	if perr != nil {
 		errs = append(errs, "priser: "+perr.Error())
 	}
@@ -366,9 +409,14 @@ func parsePricing(md string) (map[string]Price, error) {
 	var head []string
 	out := map[string]Price{}
 	long := map[string]Price{}
+	// Bara den första tabellen i avsnittet: senare tabeller (till exempel batchpriser) har
+	// andra rubriker och får aldrig läsas med de här.
 	for _, line := range strings.Split(sec, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "|") {
+			if head != nil {
+				break
+			}
 			continue
 		}
 		cells := strings.Split(strings.Trim(line, "|"), "|")
@@ -410,16 +458,17 @@ func parsePricing(md string) (map[string]Price, error) {
 			return nil, fmt.Errorf("priset för %s gick inte att läsa", id)
 		}
 		pr := Price{In: in, Out: outp}
-		switch {
-		case lm == nil:
-			out[id] = pr
-		case lm[1] == "up to":
-			out[id] = pr
-		default:
+		dst := out
+		if lm != nil && lm[1] == "over" {
 			n, _ := strconv.Atoi(strings.ReplaceAll(lm[2], ",", ""))
 			pr.LongOver = n
-			long[id] = pr
+			dst = long
 		}
+		// Samma modell två gånger med olika pris: sidan går inte att lita på.
+		if prev, dup := dst[id]; dup && prev != pr {
+			return nil, fmt.Errorf("%s har två olika priser", id)
+		}
+		dst[id] = pr
 	}
 	for id, lp := range long {
 		base, ok := out[id]

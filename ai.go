@@ -105,11 +105,16 @@ CREATE TABLE IF NOT EXISTS ai_log (
 	}
 	if err == nil {
 		// Kostnad per anrop i dollar kom till i 0.16.0. NULL = okänd (modell utan pris).
-		var n int
-		st.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ai_log') WHERE name = 'cost_in'`).Scan(&n)
-		if n == 0 {
-			if _, err = st.db.Exec(`ALTER TABLE ai_log ADD COLUMN cost_in REAL`); err == nil {
-				_, err = st.db.Exec(`ALTER TABLE ai_log ADD COLUMN cost_out REAL`)
+		// Kolumnerna kontrolleras var för sig, så att en avbruten migrering blir klar nästa gång.
+		for _, col := range []string{"cost_in", "cost_out"} {
+			var n int
+			if err = st.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ai_log') WHERE name = ?`, col).Scan(&n); err != nil {
+				break
+			}
+			if n == 0 {
+				if _, err = st.db.Exec(`ALTER TABLE ai_log ADD COLUMN ` + col + ` REAL`); err != nil {
+					break
+				}
 			}
 		}
 	}
@@ -765,10 +770,11 @@ func (s *server) refreshPrices(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	recent := p.now().Sub(p.checked) < 10*time.Minute
 	p.mu.Unlock()
-	if !recent {
+	if p.Enabled && !recent {
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
-		_ = p.refresh(ctx) // felet syns i info()
+		// Förälderns knapptryck bekräftar också ett stort prishopp (force).
+		_ = p.refresh(ctx, true) // felet syns i info(); errBusy ger de sparade värdena
 	}
 	writeJSON(w, http.StatusOK, p.info())
 }

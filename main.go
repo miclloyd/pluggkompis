@@ -199,6 +199,7 @@ func main() {
 		}
 		log.Printf("AI: %s/%s/%s, tak %d per barn och dag, %d per prov",
 			a.ai.models.Quick, a.ai.models.Default, a.ai.models.Complex, a.ai.limits.ChildPerDay, a.ai.limits.PerTest)
+		a.ai.prices.Enabled = *priceRefresh
 		if *priceRefresh {
 			go a.ai.prices.run(context.Background())
 		}

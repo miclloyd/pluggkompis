@@ -103,8 +103,9 @@ func TestPriceRefresh(t *testing.T) {
 	defer s2.Close()
 	p := a.ai.prices
 	p.pricesURL, p.fxURL = s1.URL, s2.URL
+	p.Enabled = true
 
-	if err := p.refresh(context.Background()); err != nil {
+	if err := p.refresh(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := p.prices["claude-sonnet-5-5"]; !ok || p.prices["claude-sonnet-5-5"].In != 3 {
@@ -119,7 +120,7 @@ func TestPriceRefresh(t *testing.T) {
 
 	// Trasig prissida: gamla priser kvar, felet syns, kursen uppdateras ändå.
 	ps.status = 500
-	if err := p.refresh(context.Background()); err == nil || !strings.Contains(p.lastErr, "priser") {
+	if err := p.refresh(context.Background(), false); err == nil || !strings.Contains(p.lastErr, "priser") {
 		t.Fatalf("fel: %v / %q", err, p.lastErr)
 	}
 	if p.prices["claude-sonnet-5-5"].In != 3 {
@@ -128,7 +129,7 @@ func TestPriceRefresh(t *testing.T) {
 
 	// En modell som appen använder saknas på sidan: inga priser ändras.
 	ps.status, ps.body = 0, []byte(strings.Replace(string(page), "Claude Haiku 5.5", "Claude Haiku 9.9", -1))
-	if err := p.refresh(context.Background()); err == nil || !strings.Contains(p.lastErr, "claude-haiku-5-5 saknas") {
+	if err := p.refresh(context.Background(), false); err == nil || !strings.Contains(p.lastErr, "claude-haiku-5-5 saknas") {
 		t.Fatalf("saknad modell: %v / %q", err, p.lastErr)
 	}
 
@@ -218,5 +219,66 @@ func TestPricerDefaults(t *testing.T) {
 	p, err := newPricer(a.st.db, func() time.Time { return time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC) }, []string{"claude-haiku-5-5"})
 	if err != nil || p.prices["claude-haiku-5-5"].In != 0.10 || p.sek != defaultSEK {
 		t.Fatalf("%+v %v", p, err)
+	}
+}
+
+func TestParsePricingOnlyFirstTable(t *testing.T) {
+	b, _ := os.ReadFile("testdata/pricing.md")
+	md := string(b)
+	// En senare tabell (till exempel batchpriser) med samma kolumner får inte läsas.
+	batch := "\n\n### Batch\n\n| Model | Base input tokens | 5m cache writes | 1h cache writes | Cache hits and refreshes | Output tokens |\n| :- | :- | :- | :- | :- | :- |\n| Claude Sonnet 5.5 | $1 / MTok | $1 / MTok | $1 / MTok | $1 / MTok | $5 / MTok |\n"
+	i := strings.Index(md, "*<sup>1")
+	p, err := parsePricing(md[:i] + batch + md[i:])
+	if err != nil || p["claude-sonnet-5-5"].In != 2 {
+		t.Fatalf("%v %+v", err, p["claude-sonnet-5-5"])
+	}
+	// Samma modell två gånger i tabellen med olika pris: fel.
+	dup := strings.Replace(md, "| Claude Haiku 4.5 ", "| Claude Sonnet 5.5 ", 1)
+	if _, err := parsePricing(dup); err == nil || !strings.Contains(err.Error(), "två olika priser") {
+		t.Fatalf("dubblett: %v", err)
+	}
+}
+
+func TestPriceJumpNeedsConfirmation(t *testing.T) {
+	a, h, _, pc := aiServer(t, Limits{})
+	page, _ := os.ReadFile("testdata/pricing.md")
+	ecb, _ := os.ReadFile("testdata/ecb.xml")
+	ps := &fixedSource{body: []byte(strings.Replace(string(page), "| $2 / MTok             | $2.50 / MTok", "| $20 / MTok             | $2.50 / MTok", 1))}
+	s1, s2 := httptest.NewServer(ps), httptest.NewServer(&fixedSource{body: ecb})
+	defer s1.Close()
+	defer s2.Close()
+	p := a.ai.prices
+	p.pricesURL, p.fxURL = s1.URL, s2.URL
+	// Den automatiska hämtningen stoppar tiodubblingen.
+	if err := p.refresh(context.Background(), false); err == nil || !strings.Contains(p.lastErr, "mer än 3 gånger") || p.prices["claude-sonnet-5-5"].In != 2 {
+		t.Fatalf("hopp: %v %q %+v", err, p.lastErr, p.prices["claude-sonnet-5-5"])
+	}
+	// Med -dev utan flagga hämtar knappen ingenting.
+	if w := doC(h, parent, "POST", "/api/usage/prices", "", pc); w.Code != 200 || p.prices["claude-sonnet-5-5"].In != 2 {
+		t.Fatalf("avstängd: %d %+v", w.Code, p.prices["claude-sonnet-5-5"])
+	}
+	// Förälderns knapptryck bekräftar (efter tio minuter sedan senaste försöket).
+	p.Enabled = true
+	p.checked = p.now().Add(-11 * time.Minute)
+	if w := doC(h, parent, "POST", "/api/usage/prices", "", pc); w.Code != 200 || p.prices["claude-sonnet-5-5"].In != 20 {
+		t.Fatalf("bekräftat: %d %+v", w.Code, p.prices["claude-sonnet-5-5"])
+	}
+	// Pågår redan en hämtning: ingen ny.
+	p.busy = true
+	if err := p.refresh(context.Background(), false); err != errBusy {
+		t.Fatalf("pågår: %v", err)
+	}
+	p.busy = false
+}
+
+func TestPricerRedirect(t *testing.T) {
+	other := httptest.NewServer(&fixedSource{body: []byte("x")})
+	defer other.Close()
+	red := httptest.NewServer(http.RedirectHandler(other.URL, http.StatusFound))
+	defer red.Close()
+	a, _ := testServer(t)
+	p, _ := newPricer(a.st.db, time.Now, []string{"claude-haiku-5-5"})
+	if _, err := p.get(context.Background(), red.URL); err == nil {
+		t.Fatal("omdirigering till annan värd ska stoppas")
 	}
 }
