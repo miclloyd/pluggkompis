@@ -673,7 +673,8 @@ function TestSetup({ env, go, testId }) {
               <p><strong>Sorteringsövningar saknas för ${missingSort.length} mål som jämför saker.</strong> Barnet sorterar påståenden till rätt grupp, som i ett Venn-diagram. Rättas utan AI.</p>
               <div class="actions"><button class="btn primary" disabled=${!!busy} onClick=${makeSort}>Skapa sorteringsövningar</button></div></div>`}
             ${test.outOfScope?.length > 0 && html`<div class="oos"><strong>Ingår inte i provet:</strong> ${test.outOfScope.join(' · ')}</div>`}
-            <ul class="goals">${activeGoals.map(g => html`<${GoalEditor} key=${g.id} goal=${g} materials=${materials} locked=${true} mastery=${mastery[g.id]} bank=${banks[g.id]} onSave=${() => {}} />`)}</ul>
+            <ul class="goals">${activeGoals.map(g => html`<${GoalEditor} key=${g.id} goal=${g} materials=${materials} locked=${true} mastery=${mastery[g.id]} bank=${banks[g.id]} onSave=${() => {}}
+              onSaveText=${!busy && (async ng => { await repo.saveGoal(testId, ng); reload(); })} />`)}</ul>
             <${BankPreview} goals=${activeGoals} banks=${banks} materials=${materials} onDelete=${async (gid, iid) => { await repo.saveBank(testId, gid, banks[gid].filter(i => i.id !== iid)); reload(); }} />
           </section>`}
         ${tab === 'material' && html`
@@ -713,7 +714,8 @@ function TestSetup({ env, go, testId }) {
       ${test.outOfScope?.length > 0 && html`<div class="oos"><strong>Ingår inte i provet:</strong> ${test.outOfScope.join(' · ')}</div>`}
       <ul class="goals">
         ${activeGoals.map(g => html`<${GoalEditor} key=${g.id} goal=${g} materials=${materials} locked=${ready || !!busy}
-            mastery=${mastery[g.id]} bank=${banks[g.id]} onSave=${async ng => { await repo.saveGoal(testId, ng); reload(); }} />`)}
+            mastery=${mastery[g.id]} bank=${banks[g.id]} onSave=${async ng => { await repo.saveGoal(testId, ng); reload(); }}
+            onSaveText=${ready && !busy && (async ng => { await repo.saveGoal(testId, ng); reload(); })} />`)}
       </ul>
       ${activeGoals.length > 0 && !ready && html`<${AddGoal} materials=${materials} onAdd=${async g => { await repo.saveGoal(testId, { ...g, order: goals.length }); reload(); }} />`}
     </section>
@@ -947,18 +949,28 @@ function LevelPips({ goal, mastery, bank }) {
   </span>`;
 }
 
-function GoalEditor({ goal, materials, locked, onSave, mastery, bank }) {
+function GoalEditor({ goal, materials, locked, onSave, onSaveText, mastery, bank }) {
   const [g, setG] = useState(goal);
   const [dirty, setDirty] = useState(false);
-  useEffect(() => { setG(goal); setDirty(false); }, [goal]);
+  const [editText, setEditText] = useState(null); // texten under ändring när målet är låst
+  useEffect(() => { setG(goal); setDirty(false); setEditText(null); }, [goal]);
   const upd = patch => { setG({ ...g, ...patch }); setDirty(true); };
   const needsNote = !g.enoughMaterial;
 
   if (locked) {
+    // Låst när frågorna finns: bara texten går att ändra, eftersom typ och källor styr frågorna.
+    const text = editText?.trim();
     return html`<li class="goal locked">
       <div class="goal-top"><span class=${'type t-' + g.type}>${TYPE_LABEL[g.type]}</span><${LevelPips} goal=${g} mastery=${mastery} bank=${bank} /></div>
-      <p class="goal-text">${g.text}</p>
-      <div class="goal-meta"><${SourceChips} sources=${g.sources} materials=${materials} />${bank && html`<span class="muted small">${bank.length} frågor</span>`}</div>
+      ${editText == null
+        ? html`<p class="goal-text">${g.text}</p>`
+        : html`<textarea aria-label="Lärandemål" rows="2" value=${editText} onInput=${e => setEditText(e.target.value)}></textarea>
+          <p class="small muted">Barnet ser målet, så skriv inte svaret i det. Frågorna ändras inte.</p>`}
+      <div class="goal-meta"><${SourceChips} sources=${g.sources} materials=${materials} />${bank && html`<span class="muted small">${bank.length} frågor</span>`}
+        ${onSaveText && html`<span class="goal-actions">${editText == null
+          ? html`<button class="link" onClick=${() => setEditText(g.text)}>Ändra texten</button>`
+          : html`<button class="link" onClick=${() => setEditText(null)}>Avbryt</button>
+            <button class="btn primary small" disabled=${!text || text === g.text} onClick=${() => onSaveText({ ...goal, text })}>Spara</button>`}</span>`}</div>
     </li>`;
   }
   return html`<li class=${'goal' + (needsNote && !g.parentNote ? ' attention' : '')}>

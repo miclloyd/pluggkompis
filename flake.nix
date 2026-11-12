@@ -33,7 +33,7 @@
 
     pluggkompis = pkgs.buildGoModule {
       pname = "pluggkompis";
-      version = "0.14.2";
+      version = "0.15.0";
       src = lib.cleanSource ./.;
       # Ändras go.mod: sätt lib.fakeHash, kör `nix build`, klistra in värdet.
       vendorHash = "sha256-MXye7VFLRqXHCbq8ZUJrSJQGRAiCqTqod7z2tLgy0eg=";

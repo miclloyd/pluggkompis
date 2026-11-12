@@ -5,7 +5,8 @@ import { gradeOf } from './grade.js';
 import { html, useState } from './lib.js';
 import { loadScript } from './lib.js';
 import { Sheet } from './sheet.js';
-import { hasSpellingLure, isFree, practiceMax, shuffle, correctAnswerText } from './engine.js';
+import { isFree, shuffle, correctAnswerText } from './engine.js';
+import { pickPrintItems, summaryFacts, goalLabel, goalTopic } from './booklet.js';
 import { teachFacts } from './pipeline.js';
 
 // Standardtypsnittet i PDF täcker västeuropeiska tecken. Annat byts mot närmaste motsvarighet.
@@ -16,30 +17,6 @@ function clean(s) {
 }
 
 const LETTERS = 'ABCDEFGH';
-
-// Väljer frågor till häftet: per mål några frågor från olika nivåer, aldrig felstavade alternativ.
-export function pickPrintItems({ goals, banks, mastery, perGoal = 3, onlyOpen = false }) {
-  const out = [];
-  for (const g of goals) {
-    const m = mastery[g.id];
-    if (onlyOpen && m?.passedMax && m.level >= practiceMax(g, banks[g.id])) continue;
-    const bank = (banks[g.id] || []).filter(it => !hasSpellingLure(it));
-    const byLevel = {};
-    for (const it of bank) (byLevel[it.level] ||= []).push(it);
-    const levels = Object.keys(byLevel).map(Number).sort((a, b) => a - b);
-    const items = [];
-    // Turas om mellan nivåerna så att häftet går från lätt till svårare.
-    for (let round = 0; items.length < perGoal && round < 6; round++) {
-      for (const l of levels) {
-        if (items.length >= perGoal) break;
-        const pick = byLevel[l][round];
-        if (pick) items.push(pick);
-      }
-    }
-    out.push({ goal: g, items: items.sort((a, b) => a.level - b.level) });
-  }
-  return out;
-}
 
 export async function buildBookletPdf({ libs, test, goals, banks, mastery, profileName, opts }) {
   await loadScript(libs.jspdf, libs.sri?.jspdf);
@@ -76,12 +53,13 @@ export async function buildBookletPdf({ libs, test, goals, banks, mastery, profi
     heading('Det här ska du kunna');
     picked.forEach(({ goal }, gi) => {
       need(14);
-      text(`${gi + 1}. ${goal.text.replace(/^kunna\s+/i, '').replace(/^./, c => c.toUpperCase())}`, { size: 12, style: 'bold', gap: 1 });
+      text(`${gi + 1}. ${goalLabel(goal.text)}`, { size: 12, style: 'bold', gap: 1 });
       if (goal.type === 'glosa' && goal.term) { text(`${goal.term} = ${goal.translation}`, { x: M + 6, width: CW - 6 }); return; }
       // Hela meningar ur materialet först (citat och förklaringar), bedömningspunkter bara som reserv.
       const bank = banks[goal.id] || [];
-      const sentences = [...new Set(bank.flatMap(it => [it.quote, it.explain]).filter(Boolean).map(s => String(s).trim()))].filter(f => f.split(' ').length > 3);
-      const facts = (sentences.length ? sentences : teachFacts(bank)).slice(0, 4);
+      let facts = summaryFacts(bank.flatMap(it => [it.quote, it.explain]));
+      // Inga hela meningar: bedömningspunkterna i stället, med stor bokstav.
+      if (!facts.length) facts = summaryFacts(teachFacts(bank).map(f => f.replace(/^./, c => c.toUpperCase())), { minWords: 2 });
       for (const f of facts) {
         need(6); font(11); doc.setTextColor(...pen); doc.text('•', M + 6, y + lh(11) * 0.8);
         text(f, { x: M + 11, width: CW - 11, gap: 0.8 });
@@ -94,12 +72,12 @@ export async function buildBookletPdf({ libs, test, goals, banks, mastery, profi
   if (opts.questions) {
     if (opts.summary) { doc.addPage(); y = M; }
     heading('Öva');
-    text('Svara utan att titta i boken först. Rätta sedan med facit längst bak.', { size: 10, color: ink2, gap: 4 });
+    text('Svara utan att titta i materialet först. Rätta sedan med facit längst bak.', { size: 10, color: ink2, gap: 4 });
     let n = 0;
     for (const { goal, items } of picked) {
       if (!items.length) continue;
       need(18);
-      text(goal.text.replace(/^kunna\s+/i, '').replace(/^./, c => c.toUpperCase()), { size: 10, style: 'bold', color: pen, gap: 1.5 });
+      text(goalTopic(goal.text), { size: 10, style: 'bold', color: pen, gap: 1.5 });
       for (const it of items) {
         n++;
         // Håll ihop frågan med sina alternativ eller skrivrader så långt det går.
@@ -152,7 +130,8 @@ export async function buildBookletPdf({ libs, test, goals, banks, mastery, profi
   if (opts.key && key.length) {
     doc.addPage(); y = M;
     heading('Facit');
-    for (const k of key) text(k, { size: 10.5, gap: 1.6 });
+    // En facitpost delas inte mellan två sidor.
+    for (const k of key) { font(10.5); need(doc.splitTextToSize(clean(k), CW).length * lh(10.5)); text(k, { size: 10.5, gap: 1.6 }); }
   }
 
   // Sidnummer

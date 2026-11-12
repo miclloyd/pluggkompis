@@ -5,7 +5,7 @@ import { Kompis, KOMPIS_DEFAULT } from './buddy.js';
 import { teachFacts, teachTurn } from './pipeline.js';
 import { uid } from './repo.js';
 import { coverVar, IconMic } from './ui.js';
-import { goalLabel } from './exam.js';
+import { goalTopic } from './booklet.js';
 
 // Mål att lära ut: sådant barnet har övat på (inte glosor), svagast först, med lite slump.
 export function teachCandidates({ goals, mastery, attempts }) {
@@ -41,7 +41,7 @@ export function Teach({ env, go, testId, profileId }) {
 
   const look = { ...KOMPIS_DEFAULT, ...(s?.profile?.kompis || {}) };
   const goal = s?.cands[idx % Math.max(1, s.cands.length)];
-  const opener = goal ? `Jag fattar inte riktigt det här: ”${goalLabel(goal.text)}”. Kan du förklara det för mig med egna ord?` : '';
+  const opener = goal ? `Jag fattar inte riktigt det här: ”${goalTopic(goal.text)}”. Kan du förklara det för mig med egna ord?` : '';
   const finished = turns.length >= 4 || (turns.length >= 2 && !turns[turns.length - 1].question);
 
   useEffect(() => {

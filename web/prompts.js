@@ -95,6 +95,7 @@ Uppgift: bryt ner det som ska kunnas till konkreta lärandemål.
 - Provbeskrivningen styr. Ta bara med det läraren säger ska kunnas. Saknas beskrivning, använd frågesidor och begreppslistor som vägledning.
 - Följ instruktioner i materialet om omfattning. "Det ska du inte kunna" läggs i outOfScope. "Du behöver kunna minst två" skrivs i målets note.
 - Varje mål formuleras som "Kunna ..." med ord som passar årskursen, och är specifikt nog för att kunna prövas.
+- Skriv inte svaret i målet, varken inom parentes eller efter ett kolon: målet visas för barnet ovanför övningsfrågorna. Skriv "Kunna förklara vad en gränspunkt är", inte "Kunna förklara vad en gränspunkt är (punkten där …)".
 - type är en av: begrepp, fakta, samband, resonemang, glosa, matematik.
   begrepp = veta vad ett ord betyder. fakta = minnas en uppgift. samband = förklara hur saker hänger ihop eller jämföra. resonemang = förklara varför eller dra slutsatser.
   glosa används bara för ordlistor med översättning, och då blir varje ord ett eget mål med fälten term, translation och langs (t.ex. "sv-en").
@@ -102,7 +103,7 @@ Uppgift: bryt ner det som ska kunnas till konkreta lärandemål.
 - weight 1–3: hur viktigt målet är för provet.
 - sources: de sidor där svaret finns, som {"m":"m1","p":2}. Minst en källa per mål.
 - enoughMaterial = false om svaret inte finns i materialet, till exempel när frågan hänvisar till elevens egna labbrapporter eller en redovisning. Skriv då i note vad som saknas.
-- 5–20 mål (glosor: ett per ord, högst 60). Slå ihop mål som överlappar.
+- 5–20 mål (glosor: ett per ord, högst 60). Slå ihop mål som överlappar: varje sak som ska kunnas hör till ett enda mål.
 - Jämförelseövningar (till exempel ett Venn-diagram) blir samband-mål om likheter och skillnader.
 
 Svara endast med JSON enligt:
