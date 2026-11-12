@@ -27,6 +27,11 @@ var libsFS embed.FS
 //go:embed examples/export-exempel.json
 var demoBackup []byte
 
+func init() {
+	// Hemskärmsappens manifest (web/manifest.webmanifest).
+	mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
+
 // Det enda som skiljer index.html på servern från artifacten: typsnitt och
 // htm+Preact från egna kopior i stället för Google Fonts och cdnjs.
 var indexRewrites = []struct{ from, to string }{

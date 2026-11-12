@@ -127,7 +127,10 @@ func TestStaticAndHeaders(t *testing.T) {
 	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
 		t.Fatalf("CSP: %q", csp)
 	}
-	for _, p := range []string{"/app.js", "/adapters/server.js", "/libs/pdf.min.js", "/libs/fonts.css", "/libs/fonts/atkinson-latin-400-normal.woff2"} {
+	if w := do(h, parent, "GET", "/manifest.webmanifest", ""); w.Code != 200 || w.Header().Get("Content-Type") != "application/manifest+json" {
+		t.Errorf("manifest: %d %q", w.Code, w.Header().Get("Content-Type"))
+	}
+	for _, p := range []string{"/app.js", "/adapters/server.js", "/libs/pdf.min.js", "/libs/fonts.css", "/libs/fonts/atkinson-latin-400-normal.woff2", "/icon-180.png"} {
 		if w := do(h, parent, "GET", p, ""); w.Code != 200 {
 			t.Errorf("%s: %d", p, w.Code)
 		}

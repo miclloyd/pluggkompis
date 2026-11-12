@@ -107,7 +107,7 @@ function App() {
         <button class="wordmark" onClick=${() => go({ name: 'start' })} aria-label="Till startsidan">Pluggkompis</button>
         <span class="top-actions">
           ${env.onLan && html`<button class="btn ghost small" onClick=${() => env.lan.logout().catch(() => {}).then(() => location.reload())}>Logga ut</button>`}
-          ${parentOk && html`<button class="btn ghost small" onClick=${() => env.auth.lock().then(() => { setParentOk(false); go({ name: 'start' }); }).catch(x => alert('Föräldraläget kunde inte låsas: ' + errText(x)))}>Lås föräldraläget</button>`}
+          ${parentOk && html`<button class="btn ghost small" onClick=${() => env.auth.lock().then(() => { setParentOk(false); go({ name: 'start' }); }).catch(x => alert('Föräldraläget kunde inte låsas: ' + errText(x)))}><span class="lock-long">Lås föräldraläget</span><span class="lock-short">Lås</span></button>`}
           <${ThemeButton} mode=${theme} onChange=${changeTheme} />
         </span>
       </div>
@@ -169,7 +169,7 @@ function Start({ env, go }) {
     </section>
     <div class="profiles">
       ${profiles.map(p => html`
-        <button class="profile" style=${`--c:${p.color}`} onClick=${() => { lsSet('pk.profile', p.id); go({ name: 'child', profileId: p.id }); }}>
+        <button class="profile" style=${`--c:${p.color || 'var(--pen)'}`} onClick=${() => { lsSet('pk.profile', p.id); go({ name: 'child', profileId: p.id }); }}>
           <span class="avatar">${p.name.slice(0, 1).toUpperCase()}</span>
           <span class="profile-name">${p.name}</span>
           <span class="profile-grade">Årskurs ${gradeOf(p)}</span>
@@ -318,7 +318,7 @@ function ParentHome({ env, go }) {
       <div class="block-head"><h2>Barn</h2><button class="btn ghost" onClick=${() => setEditing({ id: uid('p'), name: '', birthYear: birthYearFor(5), gradeOffset: 0, color: COLORS[profiles.length % COLORS.length], isNew: true })}>Lägg till barn</button></div>
       <ul class="list">
         ${profiles.map(p => html`<li><button class="list-row" onClick=${() => setEditing(p)}>
-          <span class="lr-main"><span class="avatar sm" style=${`--c:${p.color}`}>${p.name.slice(0, 1)}</span><strong>${p.name}</strong></span>
+          <span class="lr-main"><span class="avatar sm" style=${`--c:${p.color || 'var(--pen)'}`}>${p.name.slice(0, 1)}</span><strong>${p.name}</strong></span>
           <span class="muted small">Årskurs ${gradeOf(p)}${!p.birthYear ? ' · bekräfta födelseår' : ''}${accounts && !p.account ? ' · inget konto' : ''}</span></button></li>`)}
       </ul>
       ${editing && html`<${ProfileForm} env=${env} profile=${editing} accounts=${accounts} profiles=${profiles} onDone=${() => { setEditing(null); load(); }} />`}
@@ -1486,7 +1486,7 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
     ${result.helped && html`<p class="small muted">Du tittade i materialet först, så det här räknas som övning och flyttar inte nivån.</p>`}
     <div class="fb-tools">
       ${onExplain && html`<button class="tool" onClick=${onExplain}><${IconChat} /> Förklara mer</button>`}
-      ${item.kind !== 'math' && html`<button class="tool" onClick=${onSource}><${IconBook} /> ${source ? `Läs i materialet (${source.replace(/, sida /, ', s. ')})` : 'Läs underlaget'}</button>`}
+      ${item.kind !== 'math' && html`<button class="tool" onClick=${onSource}><${IconBook} /> ${source ? html`<span>Läs i materialet<small>${source.replace(/, sida /, ', s. ')}</small></span>` : 'Läs underlaget'}</button>`}
     </div>
     ${result.event === 'up' && html`<p class="levelup">Du går upp en nivå på det här målet.</p>`}
     ${result.event === 'fast' && html`<p class="levelup">Snabbspår! Tre rätt direkt, så du går upp en nivå.</p>`}
