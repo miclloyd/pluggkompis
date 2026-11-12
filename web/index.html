@@ -157,6 +157,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--pen); outline: n
 .chip { font-size: 0.8rem; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: var(--pen-soft); color: var(--pen); white-space: nowrap; }
 .chip.good { background: var(--good-soft); color: var(--good); }
 .chip.warn { background: var(--warn-soft); color: var(--warn); }
+.chip.bad { background: color-mix(in srgb, var(--bad) 14%, var(--sheet)); color: var(--bad); }
 
 .steps { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; flex-wrap: wrap; }
 .steps li { display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; border-radius: 999px; background: var(--sheet); border: 1px solid var(--rule); font-weight: 700; font-size: 0.92rem; color: var(--ink-2); }
@@ -722,6 +723,12 @@ body.sheet-open { overflow: hidden; }
 .photo-previews img { max-width: 160px; max-height: 220px; border-radius: 8px; border: 1px solid var(--rule); }
 /* Uppläsning och diktamen */
 .read-aloud { display: flex; justify-content: flex-end; margin: -6px 0 4px; }
+.review { margin: 14px 0; padding: 14px; border: 1px solid var(--rule-strong); border-radius: 14px; background: var(--sheet); }
+.review h4 { margin: 14px 0 4px; }
+.review-list { list-style: none; padding: 0; margin: 6px 0; display: flex; flex-direction: column; gap: 10px; }
+.review-list li { padding: 10px 12px; border: 1px solid var(--rule); border-radius: 12px; }
+.review-list li.done { opacity: 0.6; }
+.review-list p { margin: 4px 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .speak-wrap { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .speak.on { border-color: var(--pen); color: var(--pen); }

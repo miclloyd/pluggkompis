@@ -4,6 +4,7 @@ import { createRepo, uid } from './repo.js';
 import { createLocalAuth } from './auth.js';
 import { gradeOf, birthYearFor } from './grade.js';
 import { withDictation, speak, SpeakButton, readAloudText } from './speech.js';
+import { REVIEW_PROBLEMS } from './prompts.js';
 import { withChars, CharBar } from './chars.js';
 import { readFile, fileKind } from './extract.js';
 import { summarize, relDay, pct } from './stats.js';
@@ -22,7 +23,7 @@ import { Sheet } from './sheet.js';
 import { TaskList, TaskView, ParentTasks, SUPPORT_LABEL } from './tasks.js';
 import { PrintSheet } from './print.js';
 import { buildPlan, allowedGoals, minutesOnDay, DEFAULT_SCHEDULE, WEEKDAYS, PHASE_LABEL } from './plan.js';
-import { interpretMaterial, proposeGoals, buildBank, buildHighBank, buildSortBank, StepError } from './pipeline.js';
+import { interpretMaterial, proposeGoals, buildBank, buildHighBank, buildSortBank, reviewTest, StepError } from './pipeline.js';
 import { highLevelsFor } from './prompts.js';
 import { gradeFree, regradeOnDispute, TIERS } from './grading.js';
 import {
@@ -308,7 +309,9 @@ function ParentHome({ env, go }) {
               ${t.stats && html`<span class="small lr-stats">${t.stats.total
                 ? `${t.stats.total} svar · ${pct(t.stats.accuracy)} rätt · senast ${relDay(t.stats.last)}${t.stats.disputed.length ? ` · ${t.stats.disputed.length} att granska` : ''}`
                 : 'Inte övat än'}</span>`}</span>
-            <span class=${'chip ' + (t.status === 'ready' ? 'good' : t.status === 'goals' ? 'warn' : '')}>${STATUS_LABEL[t.status] || t.status}</span>
+            ${t.status === 'ready' && t.reviewed === false
+              ? html`<span class="chip warn">Granska</span>`
+              : html`<span class=${'chip ' + (t.status === 'ready' ? 'good' : t.status === 'goals' ? 'warn' : '')}>${STATUS_LABEL[t.status] || t.status}</span>`}
           </button></li>`;
         })}
       </ul>
@@ -636,9 +639,12 @@ function TestSetup({ env, go, testId }) {
     const fresh = await repo.listBanks(testId);
     const r2 = await buildHighBank({ ai: env.ai, repo, test, goals: activeGoals, materials, existing: fresh, onProgress: setBankProg });
     setBankProg(null);
-    await repo.updateTest(testId, { status: 'ready' });
+    // Barnet ser provet först när föräldern har gått igenom granskningen (reviewed).
+    await repo.updateTest(testId, { status: 'ready', reviewed: false });
     const short = [...new Set([...r.short, ...r2.short])];
     if (short.length) setInfo(`Färre frågor än vanligt för: ${short.join('; ')}.`);
+    setBusy('Granskar provet');
+    try { await reviewNow(); } catch (e) { setErr(`Frågorna är klara, men granskningen gick inte: ${errText(e)} Tryck Granska provet under Mål.`); }
   });
 
   // Ett mål som läggs till när frågorna redan finns: frågorna skapas direkt, bara för det målet.
@@ -666,6 +672,32 @@ function TestSetup({ env, go, testId }) {
     await fillGoalNow(goal, true);
   });
   const pendingGoals = activeGoals.filter(g => g.pending);
+
+  // ---- Granskningen ----
+  const reviewNow = async () => {
+    const fresh = await repo.listBanks(testId);
+    const desc = materials.filter(m => m.role === 'beskrivning').flatMap(m => m.pages.map(p => p.text)).join('\n');
+    const t = { ...test, description: [test.description, desc].filter(Boolean).join('\n\n') };
+    const review = await reviewTest({ ai: env.ai, test: t, goals: activeGoals.filter(g => !g.pending), banks: fresh, materials,
+      onProgress: p => setBankProg({ ...p, unit: 'delar' }) });
+    setBankProg(null);
+    await repo.updateTest(testId, { review });
+  };
+  const startReview = () => run('Granskar provet', async () => { try { await reviewNow(); } finally { setBankProg(null); } });
+  const decide = (key, value) => run('Sparar', () => repo.updateTest(testId, { review: { ...test.review, decisions: { ...(test.review?.decisions || {}), [key]: value } } }));
+  const removeItem = (gid, iid) => run('Tar bort frågan', async () => {
+    await repo.saveBank(testId, gid, (banks[gid] || []).filter(i => i.id !== iid));
+    await repo.updateTest(testId, { review: { ...test.review, decisions: { ...(test.review?.decisions || {}), ['f:' + iid]: 'borttagen' } } });
+  });
+  const addSuggested = (k, i) => run('Lägger till målet och skapar frågor', async () => {
+    const f = k.forslag;
+    const goal = { id: 'g' + uid(), text: f.text, type: f.type, weight: 2, sources: f.sources, enoughMaterial: true, parentNote: '', note: '',
+      approved: true, pending: true, removed: false, order: goals.length };
+    await repo.saveGoal(testId, goal);
+    await fillGoalNow(goal, true);
+    await repo.updateTest(testId, { review: { ...test.review, decisions: { ...(test.review?.decisions || {}), ['k:' + i]: 'tillagt' } } });
+  });
+  const approveTest = () => run('Godkänner provet', () => repo.updateTest(testId, { reviewed: true }));
 
   const missingSort = activeGoals.filter(g => g.type === 'samband' && !(banks[g.id] || []).some(i => i.kind === 'sort'));
   const makeSort = () => run('Skapar sorteringsövningar', async () => {
@@ -715,7 +747,7 @@ function TestSetup({ env, go, testId }) {
         </div>
       </div>
     </section>
-    ${busy && html`<p class="notice working" role="status"><span class="spinner" aria-hidden="true"></span>${busy}${bankProg ? ` (${bankProg.done} av ${bankProg.total} mål klara)` : ''}</p>`}
+    ${busy && html`<p class="notice working" role="status"><span class="spinner" aria-hidden="true"></span>${busy}${bankProg ? ` (${bankProg.done} av ${bankProg.total} ${bankProg.unit || 'mål'} klara)` : ''}</p>`}
     ${err && html`<p class="notice bad" role="alert">${err}</p>`}
     ${info && html`<p class="notice warn">${info}</p>`}`;
 
@@ -734,6 +766,8 @@ function TestSetup({ env, go, testId }) {
         ${tab === 'mal' && html`
           <section class="block flat">
             <p>${nQuestions} frågor fördelade på ${activeGoals.length} mål.</p>
+            <${ReviewPanel} test=${test} goals=${activeGoals} banks=${banks} busy=${!!busy} onReview=${startReview} onDecide=${decide}
+              onRemoveItem=${removeItem} onAddGoal=${addSuggested} onApprove=${approveTest} />
             ${missingHigh.length > 0 && html`<div class="notice">
               <p><strong>Fritextfrågor saknas för ${missingHigh.length} mål.</strong> Nivå 3–5, där barnet svarar med egna ord och AI rättar, skapas en gång per prov. Barnets framsteg följer med.</p>
               <div class="actions"><button class="btn primary" disabled=${!!busy} onClick=${makeHighBank}>Skapa fritextfrågor</button></div></div>`}
@@ -1078,6 +1112,58 @@ function GoalEditor({ goal, materials, locked, onSave, onSaveText, mastery, bank
   </li>`;
 }
 
+// Granskningen av ett färdigt prov: lärarens krav mot målen och frågorna mot materialet.
+// Granskaren ändrar ingenting; föräldern beslutar om varje fynd och godkänner provet.
+function ReviewPanel({ test, goals, banks, busy, onReview, onDecide, onRemoveItem, onAddGoal, onApprove }) {
+  const r = test.review;
+  const dec = r?.decisions || {};
+  const item = f => (banks[f.goalId] || []).find(i => i.id === f.id);
+  const gaps = (r?.krav || []).map((k, i) => ({ ...k, i })).filter(k => k.status !== 'täckt');
+  const openGaps = gaps.filter(k => !dec['k:' + k.i]);
+  const flags = (r?.fynd || []).filter(f => item(f));
+  const openFlags = flags.filter(f => !dec['f:' + f.id]);
+  const open = openGaps.length + openFlags.length;
+  const covered = (r?.krav || []).filter(k => k.status === 'täckt');
+  const goalText = id => goals.find(g => g.id === id)?.text || '';
+  return html`<section class="review">
+    <div class="block-head"><h3>Granskning</h3>
+      ${r && html`<button class="btn ghost small" disabled=${busy} onClick=${onReview}>Granska igen</button>`}</div>
+    ${!r && html`<p>En AI-granskare jämför lärarens krav med målen och varje fråga med materialet. Den ändrar inget; du beslutar om varje fynd. Tar några minuter och kostar runt en krona.</p>
+      <div class="actions left"><button class="btn primary" disabled=${busy} onClick=${onReview}>Granska provet</button></div>`}
+    ${r && html`
+      <p class="small muted">Granskat ${new Date(r.at).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' })}. ${r.summary}</p>
+      ${r.errors?.length > 0 && html`<p class="notice warn small">Delar av granskningen gick inte att läsa (${r.errors.length}). Granska igen om något verkar saknas.</p>`}
+      <h4>Lärarens krav</h4>
+      <p class="small">${covered.length} av ${(r.krav || []).length} krav täcks av målen.${gaps.length ? ` ${gaps.length} saknas helt eller delvis:` : ''}</p>
+      ${gaps.length > 0 && html`<ul class="review-list">${gaps.map(k => html`<li class=${dec['k:' + k.i] ? 'done' : ''}>
+        <p><span class=${'chip ' + (k.status === 'saknas' ? 'bad' : 'warn')}>${k.status === 'saknas' ? 'Saknas' : 'Delvis'}</span> ${k.krav}</p>
+        ${k.forslag && html`<p class="small muted">Förslag: ${k.forslag.text} (${TYPE_LABEL[k.forslag.type]})</p>`}
+        ${dec['k:' + k.i]
+          ? html`<p class="small muted">${dec['k:' + k.i] === 'tillagt' ? 'Målet är tillagt.' : 'Behövs inte.'}</p>`
+          : html`<div class="actions left">
+              ${k.forslag && html`<button class="btn primary small" disabled=${busy} onClick=${() => onAddGoal(k, k.i)}>Lägg till målet</button>`}
+              <button class="btn ghost small" disabled=${busy} onClick=${() => onDecide('k:' + k.i, 'behövs-inte')}>Behövs inte</button></div>`}
+      </li>`)}</ul>`}
+      ${covered.length > 0 && html`<details class="small"><summary>Täckta krav</summary><ul>${covered.map(k => html`<li>${k.krav}</li>`)}</ul></details>`}
+      <h4>Frågorna</h4>
+      <p class="small">${flags.length ? `${flags.length} ${flags.length === 1 ? 'fråga har' : 'frågor har'} anmärkningar:` : 'Inga anmärkningar på frågorna.'}</p>
+      ${flags.length > 0 && html`<ul class="review-list">${flags.map(f => { const it = item(f); return html`<li class=${dec['f:' + f.id] ? 'done' : ''}>
+        <p class="small muted">${goalText(f.goalId)} · nivå ${it.level}</p>
+        <p><strong>${it.q}</strong></p>
+        <p class="small">Rätt svar enligt frågan: ${correctAnswerText(it)}</p>
+        <p class="small"><span class="chip warn">${REVIEW_PROBLEMS[f.problem] || f.problem}</span> ${f.vad}</p>
+        ${dec['f:' + f.id]
+          ? html`<p class="small muted">${dec['f:' + f.id] === 'borttagen' ? 'Frågan är borttagen.' : 'Behålls.'}</p>`
+          : html`<div class="actions left">
+              <button class="btn primary small" disabled=${busy} onClick=${() => onRemoveItem(f.goalId, f.id)}>Ta bort frågan</button>
+              <button class="btn ghost small" disabled=${busy} onClick=${() => onDecide('f:' + f.id, 'behåll')}>Behåll</button></div>`}
+      </li>`; })}</ul>`}`}
+    ${test.reviewed === false && html`<div class="notice">
+      <p>${open ? `${open} fynd är inte hanterade.` : r ? 'Allt i granskningen är hanterat.' : 'Provet är inte granskat.'} Barnet ser provet när du godkänner det.</p>
+      <div class="actions left"><button class="btn primary" disabled=${busy} onClick=${onApprove}>${open || !r ? 'Godkänn ändå' : 'Godkänn provet'}</button></div></div>`}
+  </section>`;
+}
+
 function AddGoal({ materials, onAdd, late }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
@@ -1141,7 +1227,7 @@ function ChildHome({ env, go, profileId }) {
     (async () => {
       const profiles = await env.repo.listProfiles();
       const profile = profiles.find(p => p.id === profileId);
-      const tests = (await env.repo.listTests()).filter(t => t.profileId === profileId && t.status === 'ready');
+      const tests = (await env.repo.listTests()).filter(t => t.profileId === profileId && t.status === 'ready' && t.reviewed !== false); // reviewed: false = väntar på förälderns granskning
       const withProg = await Promise.all(tests.map(async t => {
         const [goals, mastery, banks, attempts] = await Promise.all([env.repo.listGoals(t.id), env.repo.listMastery(t.id), env.repo.listBanks(t.id), env.repo.listAttempts(t.id).catch(() => [])]);
         const active = goals.filter(childGoal);

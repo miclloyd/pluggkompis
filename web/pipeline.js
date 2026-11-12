@@ -5,6 +5,7 @@ import { mathBank } from './math.js';
 import {
   interpretPrompt, validateInterpret, goalsPrompt, validateGoals,
   bankPrompt, validateBank, correctionPrompt, PROMPT_VERSION,
+  coverageReviewPrompt, validateCoverage, itemReviewPrompt, validateItemReview,
   bankHighPrompt, validateHigh, highLevelsFor, sortPrompt, validateSortItems, teachPrompt, validateTeach,
 } from './prompts.js';
 import { uid } from './repo.js';
@@ -184,4 +185,38 @@ export async function teachTurn({ ai, test, goal, facts, pageText, kompis, turns
   const v = await askJson(ai, teachPrompt({ test, goal, facts, pageText, kompis, turns }), { tier: 'default' }, validateTeach);
   if (!v.ok) throw new StepError('Svaret gick inte att läsa. Försök igen.');
   return v.value;
+}
+
+// ---- Granskning av ett färdigt prov ----
+// Täckning i ett anrop, frågorna i omgångar om tre mål (med källsidorna för både målen och
+// frågorna). Resultatet sparas på provet; föräldern beslutar om varje fynd.
+export async function reviewTest({ ai, test, goals, banks, materials, onProgress }) {
+  if (!ai) throw new StepError('Claude är inte tillgängligt, så provet kan inte granskas här.');
+  const usable = materials.filter(m => m.status === 'interpreted');
+  const validRefs = new Set(usable.flatMap(m => (m.pages || []).map(p => `${m.ref}:${p.p}`)));
+  const errors = [];
+  const toReview = goals.filter(g => g.type !== 'matematik' && (banks[g.id] || []).length);
+  const batches = [];
+  for (let i = 0; i < toReview.length; i += 3) batches.push(toReview.slice(i, i + 3));
+  const total = batches.length + 1;
+
+  onProgress?.({ done: 0, total, label: 'Lärarens krav mot målen' });
+  const cov = await askJson(ai, coverageReviewPrompt({ test, goals, materials: usable }), { tier: 'complex' }, out => validateCoverage(out, goals, validRefs));
+  if (!cov.krav?.length) throw new StepError('Granskningen av lärarens krav gick inte att läsa. Försök igen.');
+  if (!cov.ok) errors.push(...cov.errors.slice(0, 3));
+
+  const fynd = [];
+  let done = 1;
+  for (const batch of batches) {
+    onProgress?.({ done, total, label: batch.map(g => g.text).join(' · ') });
+    const items = batch.flatMap(g => banks[g.id] || []);
+    const cited = items.filter(i => i.src && i.src.m !== 'note').map(i => ({ m: i.src.m, p: i.src.p }));
+    const sourceText = sourceTextFor([...batch, { sources: cited }], usable);
+    const v = await askJson(ai, itemReviewPrompt({ test, goals: batch, items, sourceText }), { tier: 'complex' }, out => validateItemReview(out, items));
+    if (!v.ok) errors.push(...v.errors.slice(0, 2));
+    for (const f of v.fynd || []) fynd.push({ ...f, goalId: items.find(i => i.id === f.id)?.goalId });
+    done++;
+  }
+  onProgress?.({ done: total, total, label: '' });
+  return { at: Date.now(), pv: PROMPT_VERSION, krav: cov.krav, summary: cov.summary, fynd, errors, decisions: {} };
 }

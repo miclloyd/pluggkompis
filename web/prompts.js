@@ -1,6 +1,6 @@
 // Promptar och svarsscheman som rena data. Samma filer används i artifacten och på servern.
 // Versionen sparas på allt som genereras, så att gamla frågor kan spåras till sin prompt.
-import { GOAL_TYPES, TYPE_MAX, hasSpellingLure } from './engine.js';
+import { GOAL_TYPES, TYPE_MAX, hasSpellingLure, correctAnswerText } from './engine.js';
 import { SKILLS } from './math.js';
 
 export const PROMPT_VERSION = 'p2.5';
@@ -576,4 +576,116 @@ export function validateTeach(out) {
     covered: out.covered.slice(0, 8), missing: out.missing.slice(0, 4), wrong: out.wrong || null,
     reply: out.reply.trim(), question: out.question ? out.question.trim() : null, stars: Math.round(stars),
   } };
+}
+
+// ---- Granskning av ett färdigt prov ----
+// Två delar: täckning (lärarens krav mot målen) och frågorna (varje svar mot källsidan).
+// Granskaren ändrar ingenting; föräldern beslutar om varje fynd.
+
+export const REVIEW_PROBLEMS = {
+  'saknar-stöd': 'Svaret står inte på källsidan',
+  'fel-svar': 'Svaret stämmer inte med materialet',
+  'flera-rätt': 'Fler än ett alternativ är rätt enligt materialet',
+  'ingen-grund': 'Frågan kräver något som materialet inte ger',
+  'oklar': 'Frågan går att förstå på flera sätt',
+  'dubblett': 'Samma fråga finns redan',
+};
+const COVERAGE = ['täckt', 'delvis', 'saknas'];
+
+export function coverageReviewPrompt({ test, goals, materials }) {
+  return `Du granskar ett prov som en förälder har förberett åt sitt barn. ${audience(test)}
+
+Lärarens beskrivning av provet:
+"""
+${test.description?.trim() || '(ingen beskrivning)'}
+"""
+
+Materialet (märkt [fil:sida]). Sidor av typen beskrivning och begreppslistor räknas också som lärarens krav:
+${materialDigest(materials)}
+
+Lärandemålen som frågorna bygger på:
+${goals.map(g => `- ${g.id} (${g.type}): ${g.text}`).join('\n')}
+${test.outOfScope?.length ? `\nIngår inte enligt läraren: ${test.outOfScope.join('; ')}` : ''}
+
+Uppgift: bryt ner det läraren säger att barnet ska kunna i konkreta krav. Varje punkt i beskrivningen och varje begrepp i en begreppslista är ett eget krav. Bedöm för varje krav om målen täcker det:
+- täckt: ett eller flera mål prövar det.
+- delvis: det nämns i ett mål men prövas inte (till exempel ett begrepp som används men aldrig förklaras).
+- saknas: inget mål prövar det.
+För delvis och saknas: föreslå ett mål som "Kunna ..." utan svaret i texten, med typ (${GOAL_TYPES.filter(t => t !== 'glosa' && t !== 'matematik').join(', ')}) och de sidor där svaret står.
+Hitta inte på krav som läraren inte ställer. Skriv kraven med lärarens ord, korta.
+
+Svara endast med JSON:
+{"krav":[{"krav":"<lärarens krav>","status":"täckt|delvis|saknas","mål":["g1"],"förslag":{"text":"Kunna ...","type":"begrepp","sources":[{"m":"m1","p":2}]}}],"sammanfattning":"<en mening till föräldern>"}`;
+}
+
+export function validateCoverage(out, goals, validRefs) {
+  const errors = [];
+  const ids = new Set(goals.map(g => g.id));
+  const krav = [];
+  for (const [i, k] of (Array.isArray(out?.krav) ? out.krav : []).entries()) {
+    const tag = `Krav ${i + 1}`;
+    if (typeof k?.krav !== 'string' || !k.krav.trim()) { errors.push(`${tag}: saknar text.`); continue; }
+    if (!COVERAGE.includes(k.status)) { errors.push(`${tag}: status ska vara ${COVERAGE.join(', ')}.`); continue; }
+    const mal = (Array.isArray(k.mål) ? k.mål : []).filter(id => ids.has(id));
+    let forslag = null;
+    if (k.status !== 'täckt') {
+      const f = k.förslag;
+      const sources = (Array.isArray(f?.sources) ? f.sources : []).map(s => ({ m: String(s?.m || ''), p: Number(s?.p) })).filter(s => validRefs.has(`${s.m}:${s.p}`));
+      if (typeof f?.text === 'string' && f.text.trim() && GOAL_TYPES.includes(f.type) && f.type !== 'glosa' && f.type !== 'matematik' && sources.length) {
+        forslag = { text: f.text.trim(), type: f.type, sources };
+      } else errors.push(`${tag}: förslaget behöver text, typ och minst en giltig källa.`);
+    }
+    krav.push({ krav: k.krav.trim().slice(0, 300), status: k.status, mal, forslag });
+  }
+  if (!krav.length) errors.push('Inga krav hittades.');
+  return { ok: !!krav.length && !errors.length, errors, krav, summary: String(out?.sammanfattning || '').trim().slice(0, 400) };
+}
+
+// En fråga i kort form för granskaren: det barnet ser och det som räknas som rätt.
+export function reviewItemText(it) {
+  const o = { id: it.id, mål: it.goalId, nivå: it.level, typ: it.kind, fråga: it.q, rätt: correctAnswerText(it) };
+  if (it.kind === 'mcq') o.alternativ = it.options;
+  if (it.must?.length) o.bedöms_på = it.must;
+  if (it.src) o.källa = `${it.src.m}:${it.src.p}`;
+  return JSON.stringify(o);
+}
+
+export function itemReviewPrompt({ test, goals, items, sourceText }) {
+  return `Du granskar övningsfrågor som ett barn ska plugga på inför ett prov. ${audience(test)}
+Barnet lär sig det som står som rätt svar, så ett fel här lärs in. Granska noga, men flagga bara verkliga problem.
+
+Lärandemål:
+${goals.map(g => `- ${g.id}: ${g.text}${g.parentNote ? ` (förälderns anteckning: ${g.parentNote})` : ''}`).join('\n')}
+
+Underlag (märkt [fil:sida]; [note:0] är förälderns anteckning):
+${sourceText}
+
+Frågorna (en per rad, JSON):
+${items.map(reviewItemText).join('\n')}
+
+Kontrollera varje fråga mot underlaget:
+- saknar-stöd: det rätta svaret (eller en punkt i bedöms_på) står inte i underlaget, varken på källsidan eller annan sida ovan.
+- fel-svar: underlaget säger något annat än det rätta svaret.
+- flera-rätt: vid flerval är fler än ett alternativ rätt enligt underlaget.
+- ingen-grund: frågan ber om en förklaring eller ett skäl som underlaget inte ger, så barnet kan bara gissa.
+- oklar: frågan går att förstå på flera sätt.
+- dubblett: samma fråga, med samma svar, finns redan för något av målen.
+Allmän kunskap som barnet rimligen kan i årskursen räknas inte som fel om den stämmer. Bildtexter och kartor i underlaget räknas som underlag.
+
+Svara endast med JSON och bara med frågor som har problem (tom lista om allt är bra):
+{"fynd":[{"id":"<frågans id>","problem":"saknar-stöd|fel-svar|flera-rätt|ingen-grund|oklar|dubblett","vad":"<en mening: vad som är fel och vad underlaget säger>"}]}`;
+}
+
+export function validateItemReview(out, items) {
+  const errors = [];
+  const ids = new Set(items.map(i => i.id));
+  const fynd = [];
+  if (!Array.isArray(out?.fynd)) return { ok: false, errors: ['"fynd" ska vara en lista.'], fynd };
+  for (const [i, f] of out.fynd.entries()) {
+    if (!ids.has(f?.id)) { errors.push(`Fynd ${i + 1}: okänd fråga ${f?.id}.`); continue; }
+    if (!Object.hasOwn(REVIEW_PROBLEMS, f.problem)) { errors.push(`Fynd ${i + 1}: okänt problem ${f.problem}.`); continue; }
+    if (typeof f.vad !== 'string' || !f.vad.trim()) { errors.push(`Fynd ${i + 1}: saknar förklaring.`); continue; }
+    if (!fynd.some(x => x.id === f.id)) fynd.push({ id: f.id, problem: f.problem, vad: f.vad.trim().slice(0, 400) });
+  }
+  return { ok: !errors.length, errors, fynd };
 }
