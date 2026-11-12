@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -223,5 +224,29 @@ func TestLANSessionPersists(t *testing.T) {
 	json.Unmarshal(lanDo(lh, "GET", "/api/config", "", nil).Body.Bytes(), &d)
 	if d["env"] != "server" {
 		t.Fatalf("config på LAN: %v", d)
+	}
+}
+
+// Full spärrtabell: aktiva spärrar tas aldrig bort, och nya försök nekas (fail-closed).
+func TestLANFailTableFull(t *testing.T) {
+	a, h, lh, pc := lanServer(t)
+	doC(h, parent, "PUT", "/api/lan/credentials", `{"account":"barn1","username":"elev1","password":"hemligt123"}`, pc)
+	for i := 0; i < lanMaxFailures; i++ {
+		lanDo(lh, "POST", "/api/lan/login", `{"username":"elev1","password":"fel"}`, nil)
+	}
+	a.auth.mu.Lock()
+	for i := 0; len(a.auth.lanFail) < lanMaxTracked; i++ {
+		a.auth.lanFail[fmt.Sprintf("fake%d|x", i)] = &failure{n: 1, until: time.Now().Add(time.Hour)}
+	}
+	a.auth.mu.Unlock()
+	lanDo(lh, "POST", "/api/lan/login", `{"username":"ny-person","password":"fel"}`, nil)
+	a.auth.mu.Lock()
+	_, still := a.auth.lanFail[lanFailKey("elev1", "203.0.113.50:5000")]
+	a.auth.mu.Unlock()
+	if !still {
+		t.Fatal("den riktiga spärren togs bort")
+	}
+	if lanLoginT(t, lh, "elev1", "hemligt123") != nil {
+		t.Fatal("rätt lösenord medan spärren gäller")
 	}
 }

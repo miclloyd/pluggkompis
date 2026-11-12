@@ -113,19 +113,18 @@ func (a *Auth) checkLAN(ctx context.Context, username, password, remote string) 
 	}
 	f := a.lanFail[key]
 	if f == nil {
-		// Taket på minnet: städa utgångna spärrar, och vid för många poster den äldsta halvan.
+		// Taket på minnet: städa poster som inte är spärrade just nu. Aktiva spärrar tas
+		// aldrig bort (annars kunde påhittade namn nollställa en riktig spärr). Är tabellen
+		// ändå full nekas försöket (fail-closed) tills spärrar löper ut.
 		if len(a.lanFail) >= lanMaxTracked {
 			now := a.now()
 			for k, v := range a.lanFail {
-				if v.until.Before(now) {
+				if !now.Before(v.until) {
 					delete(a.lanFail, k)
 				}
 			}
-			for k := range a.lanFail {
-				if len(a.lanFail) < lanMaxTracked/2 {
-					break
-				}
-				delete(a.lanFail, k)
+			if len(a.lanFail) >= lanMaxTracked {
+				return "", lanLockout, nil
 			}
 		}
 		f = &failure{}

@@ -507,8 +507,22 @@ func TestDeviceScopedTestAccount(t *testing.T) {
 			t.Errorf("arbetsdatorn låst läser %s: %d", p, w.Code)
 		}
 	}
-	// Telefonens upplåsta kaka gäller inte arbetsdatorns barnläge förrän den själv låst upp.
-	// (Kakan är knuten till kontot, så samma kaka låser upp; det är samma förälder.)
+	// Telefonen låser upp: arbetsdatorn (utan telefonens kaka) är fortfarande barn.
+	unlock(t, h)
+	if got := ids(t, do(h, ws, "GET", "/api/store/profiles?list=1", "").Body.String()); got != "pt" {
+		t.Fatalf("arbetsdatorn medan telefonen är upplåst: %q", got)
+	}
+	// Arbetsdatorns fel PIN låser inte ute telefonen (egen spärr).
+	for i := 0; i < maxFailures; i++ {
+		do(h, ws, "POST", "/api/auth/unlock", `{"pin":"0000"}`)
+	}
+	if b := do(h, parent, "POST", "/api/auth/unlock", `{"pin":"1234"}`).Body.String(); !strings.Contains(b, `"ok":true`) {
+		t.Fatalf("telefonen utelåst av arbetsdatorn: %s", b)
+	}
+	if b := do(h, ws, "POST", "/api/auth/unlock", `{"pin":"1234"}`).Body.String(); !strings.Contains(b, "waitSeconds") && strings.Contains(b, `"ok":true`) {
+		t.Fatalf("arbetsdatorns spärr släpper rätt PIN: %s", b)
+	}
+	a.auth.devFail = map[string]*failure{} // spärren löper ut
 	if w := do(h, ws, "POST", "/api/auth/unlock", `{"pin":"0000"}`); strings.Contains(w.Body.String(), `"ok":true`) {
 		t.Fatal("fel PIN låste upp")
 	}
@@ -535,6 +549,14 @@ func TestDeviceScopedTestAccount(t *testing.T) {
 	// Telefonen är fortfarande förälder, och testkontot syns som kopplingsbart konto.
 	if b := doC(h, parent, "GET", "/api/auth", "", unlock(t, h)).Body.String(); !strings.Contains(b, `"id":"test"`) {
 		t.Errorf("konton: %s", b)
+	}
+}
+
+func TestConfigUnknownFieldRejected(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.json")
+	os.WriteFile(p, []byte(`{"users":[{"id":"a","login":"x@g","role":"parent","nyttFält":true}]}`), 0o600)
+	if _, err := loadConfig(p); err == nil {
+		t.Fatal("okänt fält accepterades")
 	}
 }
 

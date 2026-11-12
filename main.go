@@ -8,6 +8,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -26,7 +27,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-var version = "0.13.0"
+var version = "0.13.1"
 
 // User: ett Tailscale-konto som får använda appen. Devices (stable ID) är
 // valfritt; anges det måste även enheten stämma. Det behövs för den förälder som
@@ -56,7 +57,11 @@ func loadConfig(path string) (Config, error) {
 	if err != nil {
 		return c, err
 	}
-	if err := json.Unmarshal(b, &c); err != nil {
+	// Okända fält är fel: ett fält som den här versionen inte förstår (t.ex. ett nytt
+	// behörighetsfält) får aldrig tyst ignoreras.
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&c); err != nil {
 		return c, err
 	}
 	// Samma konto får förekomma flera gånger bara om varje post är låst till egna enheter

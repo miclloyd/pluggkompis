@@ -57,7 +57,8 @@ type Auth struct {
 	mu       sync.Mutex
 	hashMu   sync.Mutex // en argon2-hash åt gången (minnet)
 	sessions map[string]session
-	fail     failure             // gemensam för alla konton
+	fail     failure             // gemensam för alla vanliga föräldrakonton
+	devFail  map[string]*failure // egen spärr per PINRequired-post (arbetsdatorn kan inte låsa ute telefonen)
 	lanFail  map[string]*failure // LAN-inloggning: per användarnamn och adress
 }
 
@@ -71,7 +72,7 @@ func newAuth(st *Store) (*Auth, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &Auth{db: st.db, now: st.now, sessions: map[string]session{}, fail: failure{period: firstLockout}, lanFail: map[string]*failure{}}
+	a := &Auth{db: st.db, now: st.now, sessions: map[string]session{}, fail: failure{period: firstLockout}, lanFail: map[string]*failure{}, devFail: map[string]*failure{}}
 	return a, a.migrateLAN()
 }
 
@@ -99,11 +100,23 @@ ON CONFLICT(id) DO UPDATE SET hash = excluded.hash, salt = excluded.salt, update
 // parallella anrop inte hinner förbi spärren innan felen räknats). Fel PIN
 // räknas för alla konton tillsammans och ger en spärr som fördubblas
 // (5 min, 10 min … högst en timme).
-func (a *Auth) checkPIN(ctx context.Context, pin string) (ok bool, wait time.Duration, err error) {
+func (a *Auth) checkPIN(ctx context.Context, pin string) (bool, time.Duration, error) {
+	return a.checkPINFor(ctx, pin, "")
+}
+
+// checkPINFor: scope "" = den gemensamma spärren; annars en egen spärr för scope.
+func (a *Auth) checkPINFor(ctx context.Context, pin, scope string) (ok bool, wait time.Duration, err error) {
 	a.hashMu.Lock()
 	defer a.hashMu.Unlock()
 	a.mu.Lock()
-	if f := a.fail; a.now().Before(f.until) {
+	fp := &a.fail
+	if scope != "" {
+		if a.devFail[scope] == nil {
+			a.devFail[scope] = &failure{period: firstLockout}
+		}
+		fp = a.devFail[scope]
+	}
+	if f := *fp; a.now().Before(f.until) {
 		wait = f.until.Sub(a.now())
 		a.mu.Unlock()
 		return false, wait, nil
@@ -119,15 +132,15 @@ func (a *Auth) checkPIN(ctx context.Context, pin string) (ok bool, wait time.Dur
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if ok {
-		a.fail = failure{period: firstLockout}
+		*fp = failure{period: firstLockout}
 		return true, 0, nil
 	}
-	a.fail.n++
-	if a.fail.n >= maxFailures {
-		a.fail.n = 0
-		a.fail.until = a.now().Add(a.fail.period)
-		wait = a.fail.period
-		a.fail.period = min(2*a.fail.period, maxLockout)
+	fp.n++
+	if fp.n >= maxFailures {
+		fp.n = 0
+		fp.until = a.now().Add(fp.period)
+		wait = fp.period
+		fp.period = min(2*fp.period, maxLockout)
 	}
 	return false, wait, nil
 }
@@ -280,7 +293,11 @@ func (s *server) authUnlock(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	good, wait, err := s.auth.checkPIN(r.Context(), pin)
+	scope := ""
+	if u.PINRequired {
+		scope = "dev:" + u.ID
+	}
+	good, wait, err := s.auth.checkPINFor(r.Context(), pin, scope)
 	if errors.Is(err, sql.ErrNoRows) {
 		apiError(w, http.StatusConflict, "Ingen PIN-kod är satt än.")
 		return
