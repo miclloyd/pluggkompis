@@ -9,7 +9,7 @@ tjänst på egen server.
 - `libs.json` – pinnade bibliotek (npm-tarbollar med hash); `flake.nix` bäddar in dem, inga CDN:er
 - `MANIFEST.md`, `STATUS.md` – artifactens filer, datamodell, prompter och kända buggar (v15)
 - `examples/` – exportfil och svarstabell med påhittade data (exportfilen används också av demoläget)
-- `dev/` – testmiljö och smoke-skript från artifacten, plus `libs.sh`
+- `dev/` – testmiljö och smoke-skript från artifacten, `libs.sh`, och integritetsspärren (`check-public.sh`, `pre-push`)
 
 Innehåller inga API-nycklar och inga riktiga barnnamn. Typsnitten (Atkinson Hyperlegible, Bricolage Grotesque) har
 licensen SIL Open Font License 1.1; licenserna följer med i `libs/licenses/`.

@@ -14,10 +14,17 @@ cd "$(dirname "$0")/.."
 fail=0
 history=""
 if [ "${1:-}" = "--history" ]; then history="${2:---all}"; fi
-# Tillagda rader i varje commit i intervallet (det som skulle bli publik historik).
-added() { [ -n "$history" ] && git log -p --no-color --format='commit %h' $history -- . ':!go.sum' ':!dev/check-public.sh' | grep -E '^(commit |\+[^+])' || true; }
-added_hits() { # E (mönster) eller F (ord) → rader "sha: rad"
-  added | awk '/^commit /{c=$2; next} {print c": "substr($0,2)}' | grep -i"$1" -- "$2" | cut -c1-120 || true
+# Tillagda rader i varje commit i intervallet (det som skulle bli publik historik), även i
+# merge-commits och binärfiler. Läses en gång till en temporär fil.
+# Raderna skrivs som "rad<TAB>[sha]": mönstren använder inte ^ eller $.
+hist=""
+if [ -n "$history" ]; then
+  hist=$(mktemp); trap 'rm -f "$hist"' EXIT
+  git log -p --text --diff-merges=first-parent --no-color --format='commit %h' $history -- . ':!go.sum' ':!dev/check-public.sh' \
+    | awk '/^commit /{c=$2; next} /^\+\+\+ /{next} /^\+/{print substr($0,2) "\t[" c "]"}' > "$hist"
+fi
+added_hits() { # E (mönster) eller F (ord) → träffande rader med sha
+  [ -n "$hist" ] && grep -ai"$1" -- "$2" "$hist" | cut -c1-130 || true
 }
 check() { # beskrivning, ERE-mönster
   local hits
