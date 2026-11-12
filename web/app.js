@@ -327,6 +327,13 @@ function ParentHome({ env, go }) {
     ${env.usage && html`<${AiUsage} env=${env} profiles=${profiles} tests=${tests} />`}`;
 }
 
+const AI_ERROR_TEXT = {
+  auth: 'API-nyckeln godtas inte', permission: 'nyckeln saknar behörighet', model_not_found: 'modellen finns inte',
+  no_credits: 'kontot saknar krediter', spend_limit: 'utgiftstaket är nått', rate_limited: 'Claude var överbelastat',
+  prompt_too_large: 'för stort anrop', image_rejected: 'en sidbild avvisades', invalid_request: 'Anthropic avvisade anropet',
+  upstream_error: 'okänt fel hos Anthropic', invalid_json: 'svaret gick inte att läsa', cancelled: 'avbrutet',
+};
+
 // AI-förbrukningen (servern): barnens anrop per dag mot dygnstaket, och provbyggena mot taket per prov.
 function AiUsage({ env, profiles, tests }) {
   const [u, setU] = useState(null);
@@ -360,6 +367,7 @@ function AiUsage({ env, profiles, tests }) {
     </table>`}
     ${sum(u.rows, 'limited') > 0 && html`<p class="small">Taket nåddes ${sum(u.rows, 'limited')} gånger (markerat).</p>`}
     ${sum(u.rows, 'failed') > 0 && html`<p class="small">${sum(u.rows, 'failed')} anrop gav fel.</p>`}
+    ${u.errors?.length > 0 && html`<details class="small"><summary>Senaste felen</summary><ul>${u.errors.map(e => html`<li>${new Date(e.ts).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' })}: ${AI_ERROR_TEXT[e.status] || e.status}</li>`)}</ul></details>`}
   </section>`;
 }
 

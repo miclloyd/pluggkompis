@@ -428,3 +428,25 @@ func TestAITaskRead(t *testing.T) {
 		t.Fatalf("barnets draft: %s", b)
 	}
 }
+
+func TestAnthropicErrors(t *testing.T) {
+	for _, c := range []struct {
+		status         int
+		typ, msg, want string
+	}{
+		{401, "authentication_error", "invalid x-api-key", "auth"},
+		{403, "permission_error", "", "permission"},
+		{404, "not_found_error", "model: claude-x", "model_not_found"},
+		{400, "invalid_request_error", "Your credit balance is too low to access the Anthropic API.", "no_credits"},
+		{400, "invalid_request_error", "You have reached your specified workspace API usage limits.", "spend_limit"},
+		{529, "overloaded_error", "", "rate_limited"},
+		{400, "invalid_request_error", "prompt is too long", "prompt_too_large"},
+		{400, "invalid_request_error", "image exceeds", "image_rejected"},
+		{400, "invalid_request_error", "max_tokens: too large", "invalid_request"},
+		{500, "api_error", "", "upstream_error"},
+	} {
+		if e := anthropicError(c.status, c.typ, c.msg); e.code != c.want {
+			t.Errorf("%d %s %q: %s, väntade %s", c.status, c.typ, c.msg, e.code, c.want)
+		}
+	}
+}

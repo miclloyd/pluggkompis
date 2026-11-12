@@ -225,17 +225,9 @@ func (a *AI) complete(ctx context.Context, tier string, msgs []message, images [
 	json.Unmarshal(raw, &r)
 	if resp.StatusCode != http.StatusOK {
 		// Aldrig prompten i loggen, bara felets typ.
-		log.Printf("anthropic: %d %s", resp.StatusCode, r.Error.Type)
-		switch {
-		case resp.StatusCode == 429 || resp.StatusCode == 529:
-			return "", false, 0, 0, &aiError{429, "rate_limited", "Claude har mycket att göra just nu. Vänta en stund och försök igen."}
-		case resp.StatusCode == 400 && strings.Contains(r.Error.Message, "too long"):
-			return "", false, 0, 0, &aiError{413, "prompt_too_large", "Materialet är för stort för ett anrop. Dela upp det i färre filer."}
-		case resp.StatusCode == 400 && strings.Contains(strings.ToLower(r.Error.Message), "image"):
-			return "", false, 0, 0, &aiError{400, "image_rejected", "En sidbild kunde inte skickas. Prova att ladda upp filen igen."}
-		default:
-			return "", false, 0, 0, &aiError{502, "upstream_error", "Något gick fel hos Claude. Försök igen om en stund."}
-		}
+		e := anthropicError(resp.StatusCode, r.Error.Type, r.Error.Message)
+		log.Printf("anthropic: %d %s → %s", resp.StatusCode, r.Error.Type, e.code)
+		return "", false, 0, 0, e
 	}
 	var sb strings.Builder
 	for _, c := range r.Content {
@@ -251,6 +243,34 @@ func (a *AI) complete(ctx context.Context, tier string, msgs []message, images [
 		return "", false, r.Usage.In, r.Usage.Out, &aiError{502, "empty_completion", "Claude gav inget svar. Försök igen."}
 	}
 	return text, r.StopReason == "max_tokens", r.Usage.In, r.Usage.Out, nil
+}
+
+// anthropicError: Anthropics fel (status, typ, meddelande) som ett begripligt fel. Koden
+// sparas i ai_log (status) och syns för föräldern under AI-användning; Anthropics eget
+// meddelande skickas aldrig vidare (det kan innehålla detaljer om kontot).
+func anthropicError(status int, typ, message string) *aiError {
+	m := strings.ToLower(message)
+	switch {
+	case status == 401 || typ == "authentication_error":
+		return &aiError{502, "auth", "AI-nyckeln godtas inte av Anthropic. En förälder behöver kontrollera nyckeln."}
+	case status == 403 || typ == "permission_error":
+		return &aiError{502, "permission", "AI-nyckeln saknar behörighet (workspace eller modell). En förälder behöver kontrollera den."}
+	case status == 404 || typ == "not_found_error":
+		return &aiError{502, "model_not_found", "AI-modellen finns inte för den här nyckeln. En förälder behöver kontrollera inställningen."}
+	case strings.Contains(m, "credit balance"):
+		return &aiError{502, "no_credits", "Kontot hos Anthropic saknar krediter. En förälder behöver fylla på i Console."}
+	case strings.Contains(m, "spend") || strings.Contains(m, "usage limit") || strings.Contains(m, "limit reached"):
+		return &aiError{429, "spend_limit", "Utgiftstaket hos Anthropic är nått. En förälder kan höja det i Console."}
+	case status == 429 || status == 529 || typ == "overloaded_error" || typ == "rate_limit_error":
+		return &aiError{429, "rate_limited", "Claude har mycket att göra just nu. Vänta en stund och försök igen."}
+	case status == 413 || typ == "request_too_large" || (status == 400 && strings.Contains(m, "too long")):
+		return &aiError{413, "prompt_too_large", "Materialet är för stort för ett anrop. Dela upp det i färre filer."}
+	case status == 400 && strings.Contains(m, "image"):
+		return &aiError{400, "image_rejected", "En sidbild kunde inte skickas. Prova att ladda upp filen igen."}
+	case status == 400:
+		return &aiError{502, "invalid_request", "Anthropic avvisade anropet. Försök igen; händer det igen, titta under AI-användning."}
+	}
+	return &aiError{502, "upstream_error", "Något gick fel hos Claude. Försök igen om en stund."}
 }
 
 // extractJSON: modellen ska svara med bara JSON, men tål kodblock och text runt.
@@ -509,8 +529,25 @@ FROM ai_log WHERE ts >= ? GROUP BY bucket ORDER BY bucket`, since)
 		}
 		out = append(out, u)
 	}
+	// Senaste felen (bara status och tid, aldrig innehåll): visar orsaken när AI inte fungerar.
+	type errRow struct {
+		Ts     int64  `json:"ts"`
+		Status string `json:"status"`
+		Tier   string `json:"tier"`
+	}
+	recent := []errRow{}
+	if er, err := s.ai.db.QueryContext(r.Context(), `SELECT ts, status, tier FROM ai_log WHERE status NOT IN ('ok', 'limit') ORDER BY ts DESC LIMIT 5`); err == nil {
+		for er.Next() {
+			var x errRow
+			if er.Scan(&x.Ts, &x.Status, &x.Tier) == nil {
+				recent = append(recent, x)
+			}
+		}
+		er.Close()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": true,
+		"errors":  recent,
 		"today":   s.ai.now().In(stockholm).Format("2006-01-02"),
 		"limits":  s.ai.limits,
 		"models":  s.ai.models,
@@ -537,13 +574,18 @@ func (a *AI) stream(w http.ResponseWriter, ctx context.Context, bucket, tier, mo
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("anthropic (ström): %d", resp.StatusCode)
-		a.logCall(bucket, tier, model, "upstream_error", 0, 0)
-		if resp.StatusCode == 429 || resp.StatusCode == 529 {
-			aiFail(w, 429, "rate_limited", "Claude har mycket att göra just nu. Vänta en stund och försök igen.")
-		} else {
-			aiFail(w, 502, "upstream_error", "Något gick fel hos Claude. Försök igen om en stund.")
+		var er struct {
+			Error struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"error"`
 		}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		json.Unmarshal(raw, &er)
+		e := anthropicError(resp.StatusCode, er.Error.Type, er.Error.Message)
+		log.Printf("anthropic (ström): %d %s → %s", resp.StatusCode, er.Error.Type, e.code)
+		a.logCall(bucket, tier, model, e.code, 0, 0)
+		aiFail(w, e.status, e.code, e.msg)
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-ndjson")
