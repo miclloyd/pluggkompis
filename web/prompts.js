@@ -3,7 +3,15 @@
 import { GOAL_TYPES, TYPE_MAX, hasSpellingLure } from './engine.js';
 import { SKILLS } from './math.js';
 
-export const PROMPT_VERSION = 'p2.4';
+export const PROMPT_VERSION = 'p2.5';
+
+// Barnet ser bara frågan, aldrig sidan den bygger på.
+const SEEN_RULES = `- Barnet ser bara frågan, aldrig materialet. Fråga inte om en bild, ett diagram eller en figur ("Bilden med …", "I diagrammet …"): fråga om det bilden visar, så att frågan går att besvara utan den.
+- Använd materialets egna ord för begrepp. Byt inte till ett annat ord som inte står i materialet (till exempel "försvinningspunkt" när materialet säger "gränspunkt").`;
+
+// Frågor som pekar på en bild barnet inte ser. "Vilken bild passar bäst …" (alternativen är text) går igenom.
+export const refersToHiddenImage = q => /\b(i|på) (bilden|diagrammet|figuren|kartan|tabellen)\b|\b(bilden|diagrammet|figuren) (med|som visar|över)\b/i.test(String(q));
+const HIDDEN_IMAGE = 'pekar på en bild eller ett diagram som barnet inte ser. Fråga om det bilden visar i stället.';
 
 const json = v => JSON.stringify(v);
 
@@ -189,6 +197,7 @@ Regler:
 - Para ihop har 3–5 par, och ett mål med för lite innehåll för par får flerval i stället.
 - explain är högst två korta meningar som förklarar rätt svar, utan att skriva "rätt" eller "fel".
 - Språket ska passa årskursen. Variera formuleringarna så att frågorna inte blir kopior av varandra.
+${SEEN_RULES}
 
 Svara endast med JSON: {"items":[ ... ]}`;
 }
@@ -204,6 +213,7 @@ export function validateBank(out, goals, validRefs) {
     const maxLevel = goal.type === 'glosa' ? 3 : 2;
     if (!(level >= 1 && level <= maxLevel)) { errors.push(`${tag}: nivå ${it.level} hör inte hit.`); continue; }
     if (typeof it.q !== 'string' || !it.q.trim()) { errors.push(`${tag}: saknar frågetext.`); continue; }
+    if (refersToHiddenImage(it.q)) { errors.push(`${tag}: ${HIDDEN_IMAGE}`); continue; }
     const src = { m: String(it.src?.m || ''), p: Number(it.src?.p) };
     const srcOk = validRefs.has(`${src.m}:${src.p}`) || (goal.parentNote && src.m === 'note');
     if (!srcOk) { errors.push(`${tag}: saknar giltig källa.`); continue; }
@@ -281,6 +291,7 @@ Skriv 2 sorteringsövningar per mål. Barnet sorterar korta påståenden till r�
 - 5–8 påståenden per övning, högst 12 ord vardera, alla hämtade från underlaget.
 - 2–3 kategorier, med korta namn. Använd "Båda" bara när det finns påståenden som gäller båda.
 - Undvik påståenden som kan sorteras rätt bara på ett nyckelord.
+${SEEN_RULES}
 
 Svara endast med JSON:
 {"items":[{"goal":"g1","level":2,"kind":"sort","q":"Sortera påståendena","categories":["Judendom","Islam","Båda"],"items":[["Man ber fem gånger om dagen","Islam"]],"explain":"<högst två meningar>","quote":"<mening ur underlaget>","src":{"m":"m1","p":1}}]}`;
@@ -294,6 +305,7 @@ export function validateSortItems(out, goals, validRefs) {
     if (!goal) { errors.push(`Övning ${i + 1}: okänt mål.`); continue; }
     const v = validSort(it);
     if (v) { errors.push(`Övning ${i + 1}: ${v}`); continue; }
+    if ((it.items || []).some(x => refersToHiddenImage(x?.[0]))) { errors.push(`Övning ${i + 1}: ett påstående ${HIDDEN_IMAGE}`); continue; }
     const src = { m: String(it.src?.m || ''), p: Number(it.src?.p) };
     if (!validRefs.has(`${src.m}:${src.p}`)) { errors.push(`Övning ${i + 1}: saknar giltig källa.`); continue; }
     byGoal[goal.id].push({ goalId: goal.id, level: 2, kind: 'sort', q: String(it.q || 'Sortera påståendena').trim(), categories: it.categories.map(String),
@@ -392,6 +404,7 @@ Regler för bedömningsmallen ("must"):
 - Allt i mallen ska gå att hitta i underlaget eller i förälderns anteckning. src pekar på sidan där det står.
 - Kräv inte mer än vad årskursen rimligen kan skriva.
 - Frågan ska gå att besvara utan att se materialet och får inte avslöja svaret.
+${SEEN_RULES}
 
 Svara endast med JSON: {"items":[ ... ]}`;
 }
@@ -408,6 +421,7 @@ export function validateHigh(out, goals, validRefs) {
     const kind = goal.type === 'glosa' ? 'sentence' : (level === 3 ? 'short' : 'explain');
     if (it.kind !== kind) { errors.push(`${tag}: ska ha kind "${kind}".`); continue; }
     if (typeof it.q !== 'string' || !it.q.trim()) { errors.push(`${tag}: saknar frågetext.`); continue; }
+    if (refersToHiddenImage(it.q)) { errors.push(`${tag}: ${HIDDEN_IMAGE}`); continue; }
     if (typeof it.answer !== 'string' || !it.answer.trim()) { errors.push(`${tag}: saknar modellsvar.`); continue; }
     let must = (Array.isArray(it.must) ? it.must : []).map(s => String(s).trim()).filter(Boolean);
     let moves = null;

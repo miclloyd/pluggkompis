@@ -47,7 +47,7 @@ allt barnet startar (rättning, Förklara mer, Lär ut det) högst 150 anrop per
 när ett prov byggs högst 300 anrop per prov. När barnets tak är nått rättar barnet själv med facit. Loggen
 (`ai_log`) har antal tokens per anrop, aldrig prompt eller svar. Lokalt: `-dev-ai-url` pekar på en låtsas-AI.
 
-## Status (0.15.0)
+## Status (0.15.1)
 
 Klart: lagring och filer i SQLite, inbäddad frontend med egna kopior av biblioteken, CSP, WhoIs-kontroll, roller och
 PIN på servern, demoläge (`-dev-as child` visar barnets vy).
