@@ -244,7 +244,8 @@ func (s *server) restrictedTask(r *http.Request, p string, body []byte) ([]byte,
 		if _, err := allowed(owner); err != nil {
 			return nil, err
 		}
-		for _, k := range []string{"profileId", "support", "createdAt", "firstAt"} {
+		// draft: barnets text, avläst från foto och godkänd av en förälder; barnet ändrar den inte.
+		for _, k := range []string{"profileId", "support", "createdAt", "firstAt", "draft", "draftFromPhoto"} {
 			if v, ok := stored[k]; ok {
 				in[k] = v
 			} else {
@@ -273,6 +274,8 @@ func (s *server) restrictedTask(r *http.Request, p string, body []byte) ([]byte,
 		}
 		sup, _ := json.Marshal(pf.TaskSupport)
 		in["support"] = sup
+		delete(in, "draft")
+		delete(in, "draftFromPhoto")
 		if err := s.checkTaskVersions(r, owner, nil, in); err != nil {
 			return nil, err
 		}
@@ -283,7 +286,8 @@ func (s *server) restrictedTask(r *http.Request, p string, body []byte) ([]byte,
 }
 
 const (
-	maxTaskRounds   = 3 // samma som MAX_ROUNDS i web/tasklogic.js
+	maxTaskRounds   = 3 // omgångar med feedback, samma som MAX_ROUNDS i web/tasklogic.js
+	maxTaskBlocked  = 3 // stoppade försök (räknas inte som omgång), samma som MAX_BLOCKED
 	maxTasksPerWeek = 3 // samma som TASKS_PER_WEEK
 )
 
@@ -304,7 +308,7 @@ func (s *server) checkTaskVersions(r *http.Request, owner string, storedRaw json
 	} else if r.Method == http.MethodPatch {
 		return nil // versionerna rörs inte
 	}
-	if len(next) < len(stored) || len(next) > len(stored)+1 || len(next) > maxTaskRounds {
+	if len(next) < len(stored) || len(next) > len(stored)+1 || len(next) > maxTaskRounds+maxTaskBlocked {
 		return errForbidden
 	}
 	for i := range stored {
@@ -321,10 +325,21 @@ func (s *server) checkTaskVersions(r *http.Request, owner string, storedRaw json
 		} `json:"feedback"`
 		Blocked bool `json:"blocked"`
 	}
-	if json.Unmarshal(next[len(next)-1], &v) != nil || !(v.Blocked || (v.Feedback != nil && strings.TrimSpace(v.Feedback.Strength) != "")) {
+	if json.Unmarshal(next[len(next)-1], &v) != nil {
 		return errBadDoc
 	}
-	if len(stored) == 0 {
+	// Antingen stoppad (utan feedback) eller med feedback, aldrig båda: annars kunde en
+	// omgång med feedback räknas som stoppad och tre-gränsen kringgås.
+	hasFb := v.Feedback != nil && strings.TrimSpace(v.Feedback.Strength) != ""
+	if !((v.Blocked && v.Feedback == nil) || (!v.Blocked && hasFb)) {
+		return errBadDoc
+	}
+	fb, bl := countVersions(next)
+	if fb > maxTaskRounds || bl > maxTaskBlocked {
+		return errForbidden
+	}
+	// Veckogränsen gäller uppgifter som fått feedback: kontrolleras vid uppgiftens första.
+	if prevFb, _ := countVersions(stored); prevFb == 0 && v.Feedback != nil {
 		// Veckan räknas från varje uppgifts första feedback (firstAt, satt här av
 		// servern och låst), inte från senaste ändringen.
 		now := s.st.now()
@@ -342,6 +357,23 @@ func (s *server) checkTaskVersions(r *http.Request, owner string, storedRaw json
 		in["firstAt"] = at
 	}
 	return nil
+}
+
+func countVersions(vs []json.RawMessage) (feedback, blocked int) {
+	for _, raw := range vs {
+		var v struct {
+			Feedback json.RawMessage `json:"feedback"`
+			Blocked  bool            `json:"blocked"`
+		}
+		json.Unmarshal(raw, &v)
+		// Har versionen feedback räknas den som omgång, oavsett blocked (försiktigt håll).
+		if len(v.Feedback) > 0 && string(v.Feedback) != "null" {
+			feedback++
+		} else if v.Blocked {
+			blocked++
+		}
+	}
+	return
 }
 
 var errWeekLimit = errors.New("Du har fått hjälp med tre uppgifter den här veckan. Nästa vecka kan du få hjälp igen.")

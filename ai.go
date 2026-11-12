@@ -276,7 +276,8 @@ type aiRequest struct {
 	Tier      string          `json:"tier"`
 	JSON      bool            `json:"json"`
 	Stream    bool            `json:"stream"`  // text i bitar (NDJSON), som artifactens onText
-	Purpose   string          `json:"purpose"` // child | build
+	Purpose   string          `json:"purpose"` // child | build | task
+	TaskID    string          `json:"taskId"`
 	TestID    string          `json:"testId"`
 	ProfileID string          `json:"profileId"`
 }
@@ -312,9 +313,24 @@ func (s *server) aiBucket(r *http.Request, q aiRequest) (bucket string, limit in
 		}
 		day := s.ai.now().In(stockholm).Format("2006-01-02")
 		return "child:" + q.ProfileID + ":" + day, s.ai.limits.ChildPerDay, nil
+	case "task":
+		// Handskrift från foto (skoluppgift): bara upplåst föräldraläge, som provbygget.
+		if !s.parentMode(r) {
+			return "", 0, &aiError{403, "not_granted", errLocked.Error()}
+		}
+		if _, _, _, e := docPath("tasks/" + q.TaskID); e != nil {
+			return "", 0, &aiError{400, "invalid_request", "uppgiften saknas"}
+		}
+		if _, e := s.st.Get(ctx, "tasks/"+q.TaskID); e != nil {
+			return "", 0, &aiError{400, "invalid_request", "uppgiften saknas"}
+		}
+		return "task:" + q.TaskID, maxTaskReads, nil
 	}
 	return "", 0, &aiError{400, "invalid_request", "okänt syfte"}
 }
+
+// Avläsningar av handskrift per skoluppgift (föräldern kan läsa om ett foto några gånger).
+const maxTaskReads = 10
 
 func (s *server) aiHandler(w http.ResponseWriter, r *http.Request) {
 	if s.ai == nil {
@@ -443,6 +459,7 @@ type usageRow struct {
 	Kind      string `json:"kind"` // child | build
 	ProfileID string `json:"profileId,omitempty"`
 	TestID    string `json:"testId,omitempty"`
+	TaskID    string `json:"taskId,omitempty"`
 	Date      string `json:"date,omitempty"` // svensk dag (bara child)
 	Calls     int    `json:"calls"`          // anrop till Anthropic
 	Failed    int    `json:"failed"`         // varav fel
@@ -485,6 +502,8 @@ FROM ai_log WHERE ts >= ? GROUP BY bucket ORDER BY bucket`, since)
 			u.Kind, u.ProfileID, u.Date = "child", parts[1], parts[2]
 		case parts[0] == "build" && len(parts) == 2:
 			u.Kind, u.TestID = "build", parts[1]
+		case parts[0] == "task" && len(parts) == 2:
+			u.Kind, u.TaskID = "task", parts[1]
 		default:
 			continue
 		}

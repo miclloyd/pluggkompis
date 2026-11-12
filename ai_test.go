@@ -387,3 +387,44 @@ func TestAIStreamErrors(t *testing.T) {
 		t.Fatalf("loggade fel: %d", n2)
 	}
 }
+
+// Handskrift: bara upplåst förälder, bilder tillåtna, eget tak per uppgift.
+func TestAITaskRead(t *testing.T) {
+	_, h, fake, pc := aiServer(t, Limits{})
+	if w := do(h, child, "PUT", "/api/store/tasks/k1", `{"profileId":"p1","title":"x"}`); w.Code != 204 {
+		t.Fatal(w.Code)
+	}
+	jpeg := append([]byte{0xFF, 0xD8, 0xFF, 0xE0}, make([]byte, 64)...)
+	req := map[string]any{"prompt": "Skriv av handskriften", "purpose": "task", "taskId": "k1"}
+	if w := aiCall(h, child, nil, req, jpeg); w.Code != 403 {
+		t.Fatalf("barnet: %d", w.Code)
+	}
+	if w := aiCall(h, parent, nil, req, jpeg); w.Code != 403 {
+		t.Fatalf("låst förälder: %d", w.Code)
+	}
+	if w := aiCall(h, parent, pc, map[string]any{"prompt": "x", "purpose": "task", "taskId": "k9"}, jpeg); w.Code != 400 {
+		t.Fatalf("uppgift som saknas: %d", w.Code)
+	}
+	for i := 0; i < maxTaskReads; i++ {
+		if w := aiCall(h, parent, pc, req, jpeg); w.Code != 200 {
+			t.Fatalf("avläsning %d: %d %s", i, w.Code, w.Body)
+		}
+	}
+	if w := aiCall(h, parent, pc, req, jpeg); w.Code != 429 {
+		t.Fatalf("taket: %d", w.Code)
+	}
+	if fake.calls != maxTaskReads {
+		t.Fatalf("anrop: %d", fake.calls)
+	}
+	// Föräldern sparar avläsningen; barnet kan inte skriva över den.
+	doC(h, parent, "PATCH", "/api/store/tasks/k1", `{"draft":"Vikingarna seglade.","draftFromPhoto":true}`, pc)
+	do(h, child, "PUT", "/api/store/tasks/k1", `{"profileId":"p1","title":"x","draft":"annat"}`)
+	if b := do(h, child, "GET", "/api/store/tasks/k1", "").Body.String(); !strings.Contains(b, "Vikingarna seglade.") {
+		t.Fatalf("draft: %s", b)
+	}
+	// Ett barn kan inte sätta draft på en ny uppgift.
+	do(h, child, "PUT", "/api/store/tasks/k2", `{"profileId":"p1","draft":"påhittat","draftFromPhoto":true}`)
+	if b := do(h, child, "GET", "/api/store/tasks/k2", "").Body.String(); strings.Contains(b, "påhittat") {
+		t.Fatalf("barnets draft: %s", b)
+	}
+}

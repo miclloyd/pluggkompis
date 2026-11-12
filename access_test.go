@@ -419,11 +419,32 @@ func TestTaskVersionsAppendOnly(t *testing.T) {
 	if c := put("k1", v(1)+","+v(2)); c != 204 {
 		t.Fatalf("andra: %d", c)
 	}
-	if c := put("k1", v(1)+","+v(2)+`,{"n":3,"text":"t3","blocked":true}`); c != 204 {
-		t.Fatalf("stoppad tredje: %d", c)
+	// Ett stoppat försök räknas inte som omgång: efter det går en tredje omgång med feedback.
+	b3 := `{"n":3,"text":"t3","blocked":true}`
+	if c := put("k1", v(1)+","+v(2)+","+b3); c != 204 {
+		t.Fatalf("stoppat försök: %d", c)
 	}
-	if c := put("k1", v(1)+","+v(2)+`,{"n":3,"text":"t3","blocked":true},`+v(4)); c != 403 {
-		t.Fatalf("fjärde omgången: %d", c)
+	if c := put("k1", v(1)+","+v(2)+","+b3+","+v(4)); c != 204 {
+		t.Fatalf("tredje omgången efter ett stoppat försök: %d", c)
+	}
+	if c := put("k1", v(1)+","+v(2)+","+b3+","+v(4)+","+v(5)); c != 403 {
+		t.Fatalf("fjärde omgången med feedback: %d", c)
+	}
+	// En version med både blocked och feedback nekas (den kunde annars räknas som stoppad).
+	if c := put("k1", v(1)+","+v(2)+","+b3+","+v(4)+`,{"n":5,"blocked":true,"feedback":{"strength":"Bra."}}`); c != 400 {
+		t.Fatalf("både blocked och feedback: %d", c)
+	}
+	// Högst tre stoppade försök.
+	put("k9", "")
+	bs := ""
+	for i := 1; i <= 3; i++ {
+		bs += fmt.Sprintf(`{"n":%d,"blocked":true},`, i)
+		if c := put("k9", strings.TrimSuffix(bs, ",")); c != 204 {
+			t.Fatalf("stoppat %d: %d", i, c)
+		}
+	}
+	if c := put("k9", bs+`{"n":4,"blocked":true}`); c != 403 {
+		t.Fatalf("fjärde stoppade: %d", c)
 	}
 	// PATCH som tömmer versionerna nekas också.
 	if w := do(h, child, "PATCH", "/api/store/tasks/k1", `{"versions":[]}`); w.Code != 403 {
