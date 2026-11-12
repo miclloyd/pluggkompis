@@ -429,6 +429,19 @@ func TestAITaskRead(t *testing.T) {
 	}
 }
 
+func TestUsageShowsErrorDetail(t *testing.T) {
+	_, h, fake, pc := aiServer(t, Limits{})
+	fake.status = 400
+	aiCall(h, parent, pc, map[string]any{"prompt": "x", "purpose": "build", "testId": "t1"})
+	b := doC(h, parent, "GET", "/api/usage", "", pc).Body.String()
+	if !strings.Contains(b, `"detail":"400 overloaded_error: x"`) || strings.Contains(b, "sk-test") {
+		t.Fatalf("%s", b)
+	}
+	if w := do(h, child, "GET", "/api/usage", ""); w.Code != 403 {
+		t.Fatalf("barnet ser felen: %d", w.Code)
+	}
+}
+
 func TestAnthropicErrors(t *testing.T) {
 	for _, c := range []struct {
 		status         int

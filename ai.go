@@ -94,6 +94,14 @@ CREATE TABLE IF NOT EXISTS ai_log (
   input_tokens  INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0
 );`)
+	if err == nil {
+		// detail kom till i 0.14.2: lägg till kolumnen i befintliga databaser.
+		var n int
+		st.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ai_log') WHERE name = 'detail'`).Scan(&n)
+		if n == 0 {
+			_, err = st.db.Exec(`ALTER TABLE ai_log ADD COLUMN detail TEXT NOT NULL DEFAULT ''`)
+		}
+	}
 	return &AI{
 		key: key, url: anthropicURL, models: models, limits: limits,
 		client: &http.Client{Timeout: 5 * time.Minute},
@@ -113,9 +121,13 @@ ON CONFLICT(bucket) DO UPDATE SET n = n + 1 WHERE n < ?`, bucket, limit)
 	return n == 1, err
 }
 
-func (a *AI) logCall(bucket, tier, model, status string, in, out int) {
-	_, err := a.db.Exec(`INSERT INTO ai_log (ts, bucket, tier, model, status, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		a.now().UnixMilli(), bucket, tier, model, status, in, out)
+func (a *AI) logCall(bucket, tier, model, status string, in, out int, detail ...string) {
+	d := ""
+	if len(detail) > 0 {
+		d = detail[0]
+	}
+	_, err := a.db.Exec(`INSERT INTO ai_log (ts, bucket, tier, model, status, input_tokens, output_tokens, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.now().UnixMilli(), bucket, tier, model, status, in, out, d)
 	if err != nil {
 		log.Printf("ai_log: %v", err)
 	}
@@ -127,6 +139,7 @@ type aiError struct {
 	status int
 	code   string // samma koder som artifactens AiError
 	msg    string
+	detail string // Anthropics eget felmeddelande (förkortat): bara i loggen och föräldraläget
 }
 
 func (e *aiError) Error() string { return e.code + ": " + e.msg }
@@ -144,18 +157,18 @@ type image struct {
 // parsePrompt: en sträng, eller [{role, content}] som börjar och slutar med user.
 func parsePrompt(raw json.RawMessage) ([]message, error) {
 	if len(raw) > maxPromptBytes {
-		return nil, &aiError{413, "prompt_too_large", "Materialet är för stort för ett anrop. Dela upp det i färre filer."}
+		return nil, &aiError{413, "prompt_too_large", "Materialet är för stort för ett anrop. Dela upp det i färre filer.", ""}
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		if strings.TrimSpace(s) == "" {
-			return nil, &aiError{400, "invalid_request", "tom prompt"}
+			return nil, &aiError{400, "invalid_request", "tom prompt", ""}
 		}
 		return []message{{Role: "user", Content: s}}, nil
 	}
 	var turns []struct{ Role, Content string }
 	if err := json.Unmarshal(raw, &turns); err != nil || len(turns) == 0 || len(turns) > 60 {
-		return nil, &aiError{400, "invalid_request", "ogiltig prompt"}
+		return nil, &aiError{400, "invalid_request", "ogiltig prompt", ""}
 	}
 	msgs := make([]message, 0, len(turns))
 	for i, t := range turns {
@@ -164,12 +177,12 @@ func parsePrompt(raw json.RawMessage) ([]message, error) {
 			want = "assistant"
 		}
 		if t.Role != want || strings.TrimSpace(t.Content) == "" {
-			return nil, &aiError{400, "invalid_request", "samtalet måste växla user/assistant och börja med user"}
+			return nil, &aiError{400, "invalid_request", "samtalet måste växla user/assistant och börja med user", ""}
 		}
 		msgs = append(msgs, message{Role: t.Role, Content: t.Content})
 	}
 	if msgs[len(msgs)-1].Role != "user" {
-		return nil, &aiError{400, "invalid_request", "samtalet måste sluta med user"}
+		return nil, &aiError{400, "invalid_request", "samtalet måste sluta med user", ""}
 	}
 	return msgs, nil
 }
@@ -201,9 +214,9 @@ func (a *AI) complete(ctx context.Context, tier string, msgs []message, images [
 	resp, err := a.client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return "", false, 0, 0, &aiError{499, "cancelled", "Avbrutet."}
+			return "", false, 0, 0, &aiError{499, "cancelled", "Avbrutet.", ""}
 		}
-		return "", false, 0, 0, &aiError{502, "upstream_error", "Claude svarade inte. Försök igen om en stund."}
+		return "", false, 0, 0, &aiError{502, "upstream_error", "Claude svarade inte. Försök igen om en stund.", ""}
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -226,7 +239,7 @@ func (a *AI) complete(ctx context.Context, tier string, msgs []message, images [
 	if resp.StatusCode != http.StatusOK {
 		// Aldrig prompten i loggen, bara felets typ.
 		e := anthropicError(resp.StatusCode, r.Error.Type, r.Error.Message)
-		log.Printf("anthropic: %d %s → %s", resp.StatusCode, r.Error.Type, e.code)
+		log.Printf("anthropic: %s → %s", e.detail, e.code)
 		return "", false, 0, 0, e
 	}
 	var sb strings.Builder
@@ -237,10 +250,10 @@ func (a *AI) complete(ctx context.Context, tier string, msgs []message, images [
 	}
 	text = sb.String()
 	if r.StopReason == "refusal" {
-		return "", false, r.Usage.In, r.Usage.Out, &aiError{422, "refused", "Claude ville inte behandla det här materialet."}
+		return "", false, r.Usage.In, r.Usage.Out, &aiError{422, "refused", "Claude ville inte behandla det här materialet.", ""}
 	}
 	if strings.TrimSpace(text) == "" {
-		return "", false, r.Usage.In, r.Usage.Out, &aiError{502, "empty_completion", "Claude gav inget svar. Försök igen."}
+		return "", false, r.Usage.In, r.Usage.Out, &aiError{502, "empty_completion", "Claude gav inget svar. Försök igen.", ""}
 	}
 	return text, r.StopReason == "max_tokens", r.Usage.In, r.Usage.Out, nil
 }
@@ -249,28 +262,38 @@ func (a *AI) complete(ctx context.Context, tier string, msgs []message, images [
 // sparas i ai_log (status) och syns för föräldern under AI-användning; Anthropics eget
 // meddelande skickas aldrig vidare (det kan innehålla detaljer om kontot).
 func anthropicError(status int, typ, message string) *aiError {
+	e := anthropicErrorCode(status, typ, message)
+	d := strings.TrimSpace(fmt.Sprintf("%d %s: %s", status, typ, message))
+	if r := []rune(d); len(r) > 200 {
+		d = string(r[:200]) + "…"
+	}
+	e.detail = d
+	return e
+}
+
+func anthropicErrorCode(status int, typ, message string) *aiError {
 	m := strings.ToLower(message)
 	switch {
 	case status == 401 || typ == "authentication_error":
-		return &aiError{502, "auth", "AI-nyckeln godtas inte av Anthropic. En förälder behöver kontrollera nyckeln."}
+		return &aiError{502, "auth", "AI-nyckeln godtas inte av Anthropic. En förälder behöver kontrollera nyckeln.", ""}
 	case status == 403 || typ == "permission_error":
-		return &aiError{502, "permission", "AI-nyckeln saknar behörighet (workspace eller modell). En förälder behöver kontrollera den."}
+		return &aiError{502, "permission", "AI-nyckeln saknar behörighet (workspace eller modell). En förälder behöver kontrollera den.", ""}
 	case status == 404 || typ == "not_found_error":
-		return &aiError{502, "model_not_found", "AI-modellen finns inte för den här nyckeln. En förälder behöver kontrollera inställningen."}
+		return &aiError{502, "model_not_found", "AI-modellen finns inte för den här nyckeln. En förälder behöver kontrollera inställningen.", ""}
 	case strings.Contains(m, "credit balance"):
-		return &aiError{502, "no_credits", "Kontot hos Anthropic saknar krediter. En förälder behöver fylla på i Console."}
+		return &aiError{502, "no_credits", "Kontot hos Anthropic saknar krediter. En förälder behöver fylla på i Console.", ""}
 	case strings.Contains(m, "spend") || strings.Contains(m, "usage limit") || strings.Contains(m, "limit reached"):
-		return &aiError{429, "spend_limit", "Utgiftstaket hos Anthropic är nått. En förälder kan höja det i Console."}
+		return &aiError{429, "spend_limit", "Utgiftstaket hos Anthropic är nått. En förälder kan höja det i Console.", ""}
 	case status == 429 || status == 529 || typ == "overloaded_error" || typ == "rate_limit_error":
-		return &aiError{429, "rate_limited", "Claude har mycket att göra just nu. Vänta en stund och försök igen."}
+		return &aiError{429, "rate_limited", "Claude har mycket att göra just nu. Vänta en stund och försök igen.", ""}
 	case status == 413 || typ == "request_too_large" || (status == 400 && strings.Contains(m, "too long")):
-		return &aiError{413, "prompt_too_large", "Materialet är för stort för ett anrop. Dela upp det i färre filer."}
+		return &aiError{413, "prompt_too_large", "Materialet är för stort för ett anrop. Dela upp det i färre filer.", ""}
 	case status == 400 && strings.Contains(m, "image"):
-		return &aiError{400, "image_rejected", "En sidbild kunde inte skickas. Prova att ladda upp filen igen."}
+		return &aiError{400, "image_rejected", "En sidbild kunde inte skickas. Prova att ladda upp filen igen.", ""}
 	case status == 400:
-		return &aiError{502, "invalid_request", "Anthropic avvisade anropet. Försök igen; händer det igen, säg till en förälder."}
+		return &aiError{502, "invalid_request", "Anthropic avvisade anropet. Försök igen; händer det igen, säg till en förälder.", ""}
 	}
-	return &aiError{502, "upstream_error", "Något gick fel hos Claude. Försök igen om en stund."}
+	return &aiError{502, "upstream_error", "Något gick fel hos Claude. Försök igen om en stund.", ""}
 }
 
 // extractJSON: modellen ska svara med bara JSON, men tål kodblock och text runt.
@@ -312,41 +335,41 @@ func (s *server) aiBucket(r *http.Request, q aiRequest) (bucket string, limit in
 	switch q.Purpose {
 	case "build":
 		if !s.parentMode(r) {
-			return "", 0, &aiError{403, "not_granted", errLocked.Error()}
+			return "", 0, &aiError{403, "not_granted", errLocked.Error(), ""}
 		}
 		if _, _, _, e := docPath("tests/" + q.TestID); e != nil {
-			return "", 0, &aiError{400, "invalid_request", "provet saknas"}
+			return "", 0, &aiError{400, "invalid_request", "provet saknas", ""}
 		}
 		if _, e := s.st.Get(ctx, "tests/"+q.TestID); e != nil {
-			return "", 0, &aiError{400, "invalid_request", "provet saknas"}
+			return "", 0, &aiError{400, "invalid_request", "provet saknas", ""}
 		}
 		return "build:" + q.TestID, s.ai.limits.PerTest, nil
 	case "child":
 		if _, _, _, e := docPath("profiles/" + q.ProfileID); e != nil {
-			return "", 0, &aiError{400, "invalid_request", "profilen saknas"}
+			return "", 0, &aiError{400, "invalid_request", "profilen saknas", ""}
 		}
 		if e := s.canRead(r, "profiles/"+q.ProfileID); e != nil {
-			return "", 0, &aiError{403, "not_granted", "Den här profilen är inte din."}
+			return "", 0, &aiError{403, "not_granted", "Den här profilen är inte din.", ""}
 		}
 		if _, e := s.st.Get(ctx, "profiles/"+q.ProfileID); e != nil {
-			return "", 0, &aiError{400, "invalid_request", "profilen saknas"}
+			return "", 0, &aiError{400, "invalid_request", "profilen saknas", ""}
 		}
 		day := s.ai.now().In(stockholm).Format("2006-01-02")
 		return "child:" + q.ProfileID + ":" + day, s.ai.limits.ChildPerDay, nil
 	case "task":
 		// Handskrift från foto (skoluppgift): bara upplåst föräldraläge, som provbygget.
 		if !s.parentMode(r) {
-			return "", 0, &aiError{403, "not_granted", errLocked.Error()}
+			return "", 0, &aiError{403, "not_granted", errLocked.Error(), ""}
 		}
 		if _, _, _, e := docPath("tasks/" + q.TaskID); e != nil {
-			return "", 0, &aiError{400, "invalid_request", "uppgiften saknas"}
+			return "", 0, &aiError{400, "invalid_request", "uppgiften saknas", ""}
 		}
 		if _, e := s.st.Get(ctx, "tasks/"+q.TaskID); e != nil {
-			return "", 0, &aiError{400, "invalid_request", "uppgiften saknas"}
+			return "", 0, &aiError{400, "invalid_request", "uppgiften saknas", ""}
 		}
 		return "task:" + q.TaskID, maxTaskReads, nil
 	}
-	return "", 0, &aiError{400, "invalid_request", "okänt syfte"}
+	return "", 0, &aiError{400, "invalid_request", "okänt syfte", ""}
 }
 
 // Avläsningar av handskrift per skoluppgift (föräldern kan läsa om ett foto några gånger).
@@ -425,7 +448,7 @@ func (s *server) aiHandler(w http.ResponseWriter, r *http.Request) {
 	text, truncated, in, out, cerr := s.ai.complete(r.Context(), q.Tier, msgs, images, q.JSON, maxTokens)
 	if cerr != nil {
 		e := cerr.(*aiError)
-		s.ai.logCall(bucket, q.Tier, model, e.code, in, out)
+		s.ai.logCall(bucket, q.Tier, model, e.code, in, out, e.detail)
 		aiFail(w, e.status, e.code, e.msg)
 		return
 	}
@@ -448,25 +471,25 @@ var imageTypes = map[string]bool{"image/jpeg": true, "image/png": true, "image/w
 
 func readImages(files []*multipart.FileHeader) ([]image, *aiError) {
 	if len(files) > maxImages {
-		return nil, &aiError{400, "image_rejected", fmt.Sprintf("Högst %d bilder per anrop.", maxImages)}
+		return nil, &aiError{400, "image_rejected", fmt.Sprintf("Högst %d bilder per anrop.", maxImages), ""}
 	}
 	var out []image
 	for _, fh := range files {
 		if fh.Size > maxImageBytes {
-			return nil, &aiError{413, "image_rejected", "En sidbild är för stor."}
+			return nil, &aiError{413, "image_rejected", "En sidbild är för stor.", ""}
 		}
 		f, err := fh.Open()
 		if err != nil {
-			return nil, &aiError{400, "image_rejected", "En sidbild kunde inte läsas."}
+			return nil, &aiError{400, "image_rejected", "En sidbild kunde inte läsas.", ""}
 		}
 		data, err := io.ReadAll(io.LimitReader(f, maxImageBytes+1))
 		f.Close()
 		if err != nil || len(data) > maxImageBytes {
-			return nil, &aiError{400, "image_rejected", "En sidbild kunde inte läsas."}
+			return nil, &aiError{400, "image_rejected", "En sidbild kunde inte läsas.", ""}
 		}
 		typ := http.DetectContentType(data)
 		if !imageTypes[typ] {
-			return nil, &aiError{400, "image_rejected", "En sidbild har ett format som inte stöds."}
+			return nil, &aiError{400, "image_rejected", "En sidbild har ett format som inte stöds.", ""}
 		}
 		out = append(out, image{typ: typ, data: data})
 	}
@@ -534,12 +557,14 @@ FROM ai_log WHERE ts >= ? GROUP BY bucket ORDER BY bucket`, since)
 		Ts     int64  `json:"ts"`
 		Status string `json:"status"`
 		Tier   string `json:"tier"`
+		Model  string `json:"model"`
+		Detail string `json:"detail"`
 	}
 	recent := []errRow{}
-	if er, err := s.ai.db.QueryContext(r.Context(), `SELECT ts, status, tier FROM ai_log WHERE status NOT IN ('ok', 'limit') ORDER BY ts DESC LIMIT 5`); err == nil {
+	if er, err := s.ai.db.QueryContext(r.Context(), `SELECT ts, status, tier, model, detail FROM ai_log WHERE status NOT IN ('ok', 'limit') ORDER BY ts DESC LIMIT 5`); err == nil {
 		for er.Next() {
 			var x errRow
-			if er.Scan(&x.Ts, &x.Status, &x.Tier) == nil {
+			if er.Scan(&x.Ts, &x.Status, &x.Tier, &x.Model, &x.Detail) == nil {
 				recent = append(recent, x)
 			}
 		}
@@ -583,8 +608,8 @@ func (a *AI) stream(w http.ResponseWriter, ctx context.Context, bucket, tier, mo
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		json.Unmarshal(raw, &er)
 		e := anthropicError(resp.StatusCode, er.Error.Type, er.Error.Message)
-		log.Printf("anthropic (ström): %d %s → %s", resp.StatusCode, er.Error.Type, e.code)
-		a.logCall(bucket, tier, model, e.code, 0, 0)
+		log.Printf("anthropic (ström): %s → %s", e.detail, e.code)
+		a.logCall(bucket, tier, model, e.code, 0, 0, e.detail)
 		aiFail(w, e.status, e.code, e.msg)
 		return
 	}

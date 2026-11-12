@@ -367,7 +367,7 @@ function AiUsage({ env, profiles, tests }) {
     </table>`}
     ${sum(u.rows, 'limited') > 0 && html`<p class="small">Taket nåddes ${sum(u.rows, 'limited')} gånger (markerat).</p>`}
     ${sum(u.rows, 'failed') > 0 && html`<p class="small">${sum(u.rows, 'failed')} anrop gav fel.</p>`}
-    ${u.errors?.length > 0 && html`<details class="small"><summary>Senaste felen</summary><ul>${u.errors.map(e => html`<li>${new Date(e.ts).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' })}: ${AI_ERROR_TEXT[e.status] || e.status}</li>`)}</ul></details>`}
+    ${u.errors?.length > 0 && html`<details class="small"><summary>Senaste felen</summary><ul>${u.errors.map(e => html`<li>${new Date(e.ts).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' })}: ${AI_ERROR_TEXT[e.status] || e.status}${e.model ? ` (${e.model})` : ''}${e.detail ? html`<br /><code class="small">${e.detail}</code>` : ''}</li>`)}</ul></details>`}
   </section>`;
 }
 
