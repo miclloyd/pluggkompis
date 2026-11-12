@@ -1078,7 +1078,6 @@ function GoalEditor({ goal, materials, locked, onSave, onSaveText, mastery, bank
   </li>`;
 }
 
-// Sidor ur "2-3, 5" (tom = alla sidor i filen); bara sidor som finns.
 function AddGoal({ materials, onAdd, late }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
