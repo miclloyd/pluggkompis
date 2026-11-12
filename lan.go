@@ -115,7 +115,9 @@ func (a *Auth) checkLAN(ctx context.Context, username, password, remote string) 
 	if f == nil {
 		// Taket på minnet: städa poster som inte är spärrade just nu. Aktiva spärrar tas
 		// aldrig bort (annars kunde påhittade namn nollställa en riktig spärr). Är tabellen
-		// ändå full nekas försöket (fail-closed) tills spärrar löper ut.
+		// ändå full nekas försöket (fail-closed) tills spärrar löper ut. Avvägning: en part på
+		// hemnätet som fyller tabellen kan stänga LAN-inloggningen i upp till lanLockout, men
+		// aldrig gissa förbi en spärr. Tailnätet påverkas inte.
 		if len(a.lanFail) >= lanMaxTracked {
 			now := a.now()
 			for k, v := range a.lanFail {

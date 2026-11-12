@@ -64,6 +64,9 @@ func loadConfig(path string) (Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		return c, err
 	}
+	if dec.More() {
+		return c, fmt.Errorf("%s: mer än ett JSON-värde", path)
+	}
 	// Samma konto får förekomma flera gånger bara om varje post är låst till egna enheter
 	// (t.ex. ett testkonto i barnroll för en viss enhet hos en förälder).
 	seenID := map[string]bool{}

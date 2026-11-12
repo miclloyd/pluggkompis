@@ -519,7 +519,7 @@ func TestDeviceScopedTestAccount(t *testing.T) {
 	if b := do(h, parent, "POST", "/api/auth/unlock", `{"pin":"1234"}`).Body.String(); !strings.Contains(b, `"ok":true`) {
 		t.Fatalf("telefonen utelåst av arbetsdatorn: %s", b)
 	}
-	if b := do(h, ws, "POST", "/api/auth/unlock", `{"pin":"1234"}`).Body.String(); !strings.Contains(b, "waitSeconds") && strings.Contains(b, `"ok":true`) {
+	if b := do(h, ws, "POST", "/api/auth/unlock", `{"pin":"1234"}`).Body.String(); strings.Contains(b, `"ok":true`) {
 		t.Fatalf("arbetsdatorns spärr släpper rätt PIN: %s", b)
 	}
 	a.auth.devFail = map[string]*failure{} // spärren löper ut
@@ -554,16 +554,26 @@ func TestDeviceScopedTestAccount(t *testing.T) {
 
 func TestConfigUnknownFieldRejected(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "c.json")
-	os.WriteFile(p, []byte(`{"users":[{"id":"a","login":"x@g","role":"parent","nyttFält":true}]}`), 0o600)
+	if err := os.WriteFile(p, []byte(`{"users":[{"id":"a","login":"x@g","role":"parent","nyttFält":true}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := loadConfig(p); err == nil {
 		t.Fatal("okänt fält accepterades")
+	}
+	if err := os.WriteFile(p, []byte(`{"users":[]} {"users":[{"id":"x"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadConfig(p); err == nil {
+		t.Fatal("skräp efter första JSON-värdet accepterades")
 	}
 }
 
 func TestConfigSharedLogin(t *testing.T) {
 	write := func(js string) string {
 		p := filepath.Join(t.TempDir(), "c.json")
-		os.WriteFile(p, []byte(js), 0o600)
+		if err := os.WriteFile(p, []byte(js), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		return p
 	}
 	ok := `{"users":[{"id":"a","login":"x@g","role":"parent","devices":["n1"]},{"id":"b","login":"x@g","role":"child","devices":["n2"]}]}`
