@@ -768,7 +768,8 @@ func (s *server) refreshPrices(w http.ResponseWriter, r *http.Request) {
 	}
 	p := s.ai.prices
 	p.mu.Lock()
-	recent := p.now().Sub(p.checked) < 10*time.Minute
+	// Tiominutersspärren gäller inte när ett prishopp väntar på bekräftelse.
+	recent := p.now().Sub(p.checked) < 10*time.Minute && !p.jump
 	p.mu.Unlock()
 	if p.Enabled && !recent {
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)

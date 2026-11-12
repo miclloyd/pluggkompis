@@ -253,13 +253,14 @@ func TestPriceJumpNeedsConfirmation(t *testing.T) {
 	if err := p.refresh(context.Background(), false); err == nil || !strings.Contains(p.lastErr, "mer än 3 gånger") || p.prices["claude-sonnet-5-5"].In != 2 {
 		t.Fatalf("hopp: %v %q %+v", err, p.lastErr, p.prices["claude-sonnet-5-5"])
 	}
-	// Med -dev utan flagga hämtar knappen ingenting.
+	// Med -dev utan flagga hämtar knappen ingenting, inte heller när spärren inte gäller.
+	p.checked = p.now().Add(-11 * time.Minute)
 	if w := doC(h, parent, "POST", "/api/usage/prices", "", pc); w.Code != 200 || p.prices["claude-sonnet-5-5"].In != 2 {
 		t.Fatalf("avstängd: %d %+v", w.Code, p.prices["claude-sonnet-5-5"])
 	}
-	// Förälderns knapptryck bekräftar (efter tio minuter sedan senaste försöket).
+	// Förälderns knapptryck bekräftar direkt: ett väntande prishopp går förbi tiominutersspärren.
 	p.Enabled = true
-	p.checked = p.now().Add(-11 * time.Minute)
+	p.checked = p.now()
 	if w := doC(h, parent, "POST", "/api/usage/prices", "", pc); w.Code != 200 || p.prices["claude-sonnet-5-5"].In != 20 {
 		t.Fatalf("bekräftat: %d %+v", w.Code, p.prices["claude-sonnet-5-5"])
 	}
@@ -269,6 +270,24 @@ func TestPriceJumpNeedsConfirmation(t *testing.T) {
 		t.Fatalf("pågår: %v", err)
 	}
 	p.busy = false
+}
+
+func TestCheckRedirect(t *testing.T) {
+	req := func(u string) *http.Request { r, _ := http.NewRequest("GET", u, nil); return r }
+	first := []*http.Request{req("https://platform.claude.com/a")}
+	if err := checkRedirect(req("https://platform.claude.com/b"), first); err != nil {
+		t.Errorf("samma värd: %v", err)
+	}
+	if err := checkRedirect(req("https://example.org/b"), first); err == nil || !strings.Contains(err.Error(), "annan värd") {
+		t.Errorf("annan värd: %v", err)
+	}
+	if err := checkRedirect(req("http://platform.claude.com/b"), first); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Errorf("http: %v", err)
+	}
+	three := []*http.Request{first[0], first[0], first[0]}
+	if err := checkRedirect(req("https://platform.claude.com/b"), three); err == nil || !strings.Contains(err.Error(), "för många") {
+		t.Errorf("tak: %v", err)
+	}
 }
 
 func TestPricerRedirect(t *testing.T) {

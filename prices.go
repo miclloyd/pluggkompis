@@ -77,6 +77,7 @@ type pricer struct {
 	checked  time.Time // senaste försöket
 	lastErr  string
 	busy     bool // en hämtning pågår
+	jump     bool // senaste hämtningen stoppades av ett prishopp: väntar på förälderns bekräftelse
 	Enabled  bool // false: ingen hämtning alls (lokal utveckling utan -price-refresh)
 	changes  []priceChange
 }
@@ -87,15 +88,21 @@ type priceChange struct {
 	What  string `json:"what"`
 }
 
+// checkRedirect: högst tre omdirigeringar, bara https och bara till samma värd.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	switch {
+	case len(via) >= 3:
+		return errors.New("för många omdirigeringar")
+	case req.URL.Scheme != "https":
+		return errors.New("omdirigering utan https")
+	case req.URL.Host != via[0].URL.Host:
+		return errors.New("omdirigering till annan värd")
+	}
+	return nil
+}
+
 func newPricer(db *sql.DB, now func() time.Time, models []string) (*pricer, error) {
-	client := &http.Client{Timeout: 30 * time.Second,
-		// Omdirigeringar bara till https på samma värd.
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 3 || req.URL.Scheme != "https" || req.URL.Host != via[0].URL.Host {
-				return errors.New("omdirigering till annan värd")
-			}
-			return nil
-		}}
+	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: checkRedirect}
 	p := &pricer{db: db, now: now, client: client,
 		pricesURL: pricesURL, fxURL: fxURL, models: models}
 	_, err := db.Exec(`
@@ -246,7 +253,9 @@ func (p *pricer) refresh(ctx context.Context, force bool) error {
 		}
 		p.mu.Unlock()
 	}
+	jump := false
 	if perr != nil {
+		jump = strings.Contains(perr.Error(), "ändras mer än")
 		errs = append(errs, "priser: "+perr.Error())
 	}
 	sek, sekAt, ferr := p.fetchFX(ctx)
@@ -318,7 +327,7 @@ func (p *pricer) refresh(ctx context.Context, force bool) error {
 	if ferr == nil {
 		p.sek, p.sekAt = sek, sekAt
 	}
-	p.checked, p.lastErr = now, lastErr
+	p.checked, p.lastErr, p.jump = now, lastErr, jump
 	for _, c := range changes {
 		log.Printf("priser: %s %s", c.Model, c.What)
 	}
