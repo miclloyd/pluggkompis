@@ -9,8 +9,12 @@ export const PROMPT_VERSION = 'p2.5';
 const SEEN_RULES = `- Barnet ser bara frågan, aldrig materialet. Fråga inte om en bild, ett diagram eller en figur ("Bilden med …", "I diagrammet …"): fråga om det bilden visar, så att frågan går att besvara utan den.
 - Använd materialets egna ord för begrepp. Byt inte till ett annat ord som inte står i materialet (till exempel "försvinningspunkt" när materialet säger "gränspunkt").`;
 
-// Frågor som pekar på en bild barnet inte ser. "Vilken bild passar bäst …" (alternativen är text) går igenom.
-export const refersToHiddenImage = q => /\b(i|på) (bilden|diagrammet|figuren|kartan|tabellen)\b|\b(bilden|diagrammet|figuren) (med|som visar|över)\b/i.test(String(q));
+// Frågor som pekar på en bild barnet inte ser: "Bilden visar …", "Bilden med …", "I diagrammet …",
+// "Titta på bilden". Allmänna frågor om att rita ("Var placerar du horisontlinjen i bilden?",
+// "Vilken bild passar bäst …?") ska gå igenom, så "i/på bilden" räcker inte ensamt.
+const PICS = 'bilden|bilderna|diagrammet|figuren|kartan|tabellen|grafen|illustrationen|fotot';
+const HIDDEN_RE = new RegExp(`(?:^|[^\\p{L}])(?:(?:${PICS})\\s+(?:med|som visar|visar|över|ovan|nedan|till (?:höger|vänster))|(?:i|på) (?:diagrammet|figuren|tabellen|grafen|illustrationen)|(?:i|på) (?:${PICS}) (?:ovan|nedan|på sidan)|titta på (?:${PICS})|se på (?:${PICS}))(?![\\p{L}])`, 'iu');
+export const refersToHiddenImage = q => HIDDEN_RE.test(String(q));
 const HIDDEN_IMAGE = 'pekar på en bild eller ett diagram som barnet inte ser. Fråga om det bilden visar i stället.';
 
 const json = v => JSON.stringify(v);

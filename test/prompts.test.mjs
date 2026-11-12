@@ -1,12 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { refersToHiddenImage, validateBank, bankPrompt, bankHighPrompt, sortPrompt } from '../web/prompts.js';
+import { refersToHiddenImage, validateBank, validateHigh, validateSortItems, bankPrompt, bankHighPrompt, sortPrompt } from '../web/prompts.js';
 
 test('frågor som pekar på en bild barnet inte ser stoppas', () => {
   for (const q of ['Bilden med skogen och höga träd visar en svart linje som exempel. Vilken sorts linje är det?',
-    'I diagrammet över rummets grund, var sitter gränspunkten?', 'Vad ser du på bilden?', 'Figuren som visar cellen: vad är A?'])
+    'I diagrammet över rummets grund, var sitter gränspunkten?', 'Bilden visar en kub. Vilken sida ser du?', 'Diagrammet visar temperaturen. När är det varmast?',
+    'Kartan över Norden: vilket land ligger längst norrut?', 'Titta på bilden ovan. Vad ser du?', 'Vad står i tabellen?', 'Figuren som visar cellen: vad är A?',
+    'Vad syns på bilden ovan?'])
     assert.ok(refersToHiddenImage(q), q);
-  for (const q of ['Vilken bild passar bäst för grodperspektiv?', 'Vad är en gränspunkt?', 'Varför ritar man en bild i centralperspektiv?'])
+  for (const q of ['Vilken bild passar bäst för grodperspektiv?', 'Vad är en gränspunkt?', 'Varför ritar man en bild i centralperspektiv?',
+    'Var placerar du horisontlinjen i bilden om du vill rita ett rum i fågelperspektiv?', 'Vad ska finnas på bilden när du är klar?',
+    'Hur läser man av en karta?', 'Vad är en bildtext?'])
     assert.ok(!refersToHiddenImage(q), q);
 });
 
@@ -25,4 +29,18 @@ test('alla frågepromptar har reglerna om bilder och materialets ord', () => {
     assert.match(p, /Barnet ser bara frågan, aldrig materialet/);
     assert.match(p, /materialets egna ord/);
   }
+});
+
+test('fritext och sortering stoppar också bildfrågor', () => {
+  const goals = [{ id: 'g1', type: 'begrepp' }];
+  const refs = new Set(['m1:6']);
+  const high = q => ({ goal: 'g1', level: 3, kind: 'short', q, answer: 'Den står rakt upp.', must: ['nämner att den står rakt upp'], src: { m: 'm1', p: 6 } });
+  const h = validateHigh({ items: [high('Bilden visar ett träd. Hur står trädet?'), high('Hur står en lodrät linje mot marken?')] }, goals, refs);
+  assert.ok(h.errors.some(e => /^Fråga 1: pekar på en bild/.test(e)), JSON.stringify(h.errors));
+  assert.ok(!h.errors.some(e => /^Fråga 2/.test(e)), JSON.stringify(h.errors));
+  const sort = first => ({ goal: 'g1', kind: 'sort', q: 'Sortera påståendena', categories: ['Lodrät', 'Vågrät'],
+    items: [[first, 'Lodrät'], ['Kubens hörn', 'Lodrät'], ['Framsidans överkant', 'Vågrät'], ['Parallell med marken', 'Vågrät']], src: { m: 'm1', p: 6 } });
+  const so = validateSortItems({ items: [sort('Linjen i bilden med skogen'), sort('Står i 90 grader mot marken')] }, goals, refs);
+  assert.ok(so.errors.some(e => /^Övning 1: ett påstående pekar på en bild/.test(e)), JSON.stringify(so.errors));
+  assert.ok(!so.errors.some(e => /^Övning 2/.test(e)), JSON.stringify(so.errors));
 });
