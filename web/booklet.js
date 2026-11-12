@@ -23,7 +23,7 @@ export function goalTopic(t) {
   const colon = s.indexOf(': ');
   if (colon > 0 && words(s.slice(0, colon)).length >= 3) s = s.slice(0, colon);
   s = s.replace(/[.:;,]$/, '');
-  return s || goalLabel(t);
+  return s || 'Det här målet';
 }
 
 // En punkt i "Det här ska du kunna" ska vara en hel mening: stor bokstav först, inget kolon

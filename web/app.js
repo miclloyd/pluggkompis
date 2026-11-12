@@ -976,7 +976,7 @@ function GoalEditor({ goal, materials, locked, onSave, onSaveText, mastery, bank
       <div class="goal-meta"><${SourceChips} sources=${g.sources} materials=${materials} />${bank && html`<span class="muted small">${bank.length} frågor</span>`}
         ${onSaveText && html`<span class="goal-actions">${editText == null
           ? html`<button class="link" onClick=${() => setEditText(g.text)}>Ändra texten</button>`
-          : html`<button class="link" onClick=${() => setEditText(null)}>Avbryt</button>
+          : html`<button class="link" onClick=${() => { setEditText(null); setSaveErr(''); }}>Avbryt</button>
             <button class="btn primary small" disabled=${!text || text === g.text || saving} onClick=${saveText}>Spara</button>`}</span>`}</div>
       ${saveErr && html`<p class="notice bad">${saveErr}</p>`}
     </li>`;

@@ -56,14 +56,18 @@ test('glosor, matematik och korta frågor tas aldrig bort som dubbletter', () =>
   const q = (id, level, text, kind = 'short') => ({ id, level, kind, q: text });
   const goals = [{ id: 'a', type: 'glosa' }, { id: 'b', type: 'glosa' }, { id: 'm', type: 'matematik' }, { id: 'n', type: 'matematik' }, { id: 'c', type: 'begrepp' }, { id: 'd', type: 'begrepp' }];
   const banks = {
-    a: [q('a1', 1, 'Vad heter hund på engelska?')], b: [q('b1', 1, 'Vad heter katt på engelska?')],
-    m: [q('m1', 1, 'Vad är 3 + 4?', 'math')], n: [q('n1', 1, 'Vad är 4 + 3?', 'math')],
+    // Långa nog för filtret (minst fem ord och överlapp ≥ 0,8): bara typen skyddar dem.
+    a: [q('a1', 1, 'Vad heter ordet hund på engelska när du pratar?')], b: [q('b1', 1, 'Vad heter ordet katt på engelska när du pratar?')],
+    m: [q('m1', 1, 'Hur mycket blir 3 plus 4 om du räknar?', 'math')], n: [q('n1', 1, 'Hur mycket blir 4 plus 3 om du räknar?', 'math')],
     c: [q('c1', 1, 'Vad är en horisontlinje?')], d: [q('d1', 1, 'Vad är en gränspunkt?')],
   };
   const out = pickPrintItems({ goals, banks, mastery: {}, perGoal: 2 });
   assert.deepEqual(out.map(o => o.items.length), [1, 1, 1, 1, 1, 1]);
+  // Samma frågor under ett vanligt mål räknas som dubbletter: det är typen som skyddar.
+  const asBegrepp = pickPrintItems({ goals: goals.map(g => ({ ...g, type: 'begrepp' })), banks, mastery: {}, perGoal: 2 });
+  assert.deepEqual(asBegrepp.map(o => o.items.length), [1, 0, 1, 0, 1, 1]);
 });
 
 test('rubriken blir aldrig tom', () => {
-  assert.equal(goalTopic('Kunna (grodperspektiv)'), '(grodperspektiv)');
+  assert.equal(goalTopic('Kunna (grodperspektiv)'), 'Det här målet');
 });
