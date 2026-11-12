@@ -57,7 +57,8 @@ type Auth struct {
 	mu       sync.Mutex
 	hashMu   sync.Mutex // en argon2-hash åt gången (minnet)
 	sessions map[string]session
-	fail     failure // gemensam för alla konton
+	fail     failure             // gemensam för alla konton
+	lanFail  map[string]*failure // LAN-inloggning: per användarnamn och adress
 }
 
 func newAuth(st *Store) (*Auth, error) {
@@ -67,7 +68,11 @@ func newAuth(st *Store) (*Auth, error) {
   salt       BLOB NOT NULL,
   updated_at INTEGER NOT NULL
 )`)
-	return &Auth{db: st.db, now: st.now, sessions: map[string]session{}, fail: failure{period: firstLockout}}, err
+	if err != nil {
+		return nil, err
+	}
+	a := &Auth{db: st.db, now: st.now, sessions: map[string]session{}, fail: failure{period: firstLockout}, lanFail: map[string]*failure{}}
+	return a, a.migrateLAN()
 }
 
 func (a *Auth) hasPIN(ctx context.Context) (bool, error) {
@@ -191,6 +196,15 @@ type account struct {
 
 func (s *server) authStatus(w http.ResponseWriter, r *http.Request) {
 	u := currentUser(r)
+	if s.lan {
+		// Skoldatorn: bara barnets inloggning, aldrig föräldraläge.
+		res := map[string]any{"lan": true, "loggedIn": u.ID != "", "role": "child", "hasPin": true, "unlocked": false}
+		if u.ID != "" {
+			res["account"], res["name"] = u.ID, u.Name
+		}
+		writeJSON(w, http.StatusOK, res)
+		return
+	}
 	has, err := s.auth.hasPIN(r.Context())
 	if err != nil {
 		storeError(w, err)
@@ -200,11 +214,14 @@ func (s *server) authStatus(w http.ResponseWriter, r *http.Request) {
 	if u.Role == "child" {
 		res["account"] = u.ID
 	}
+	if u.canUnlock {
+		res["canUnlock"] = true // föräldern på arbetsdatorn: barnläge tills PIN
+	}
 	if s.parentMode(r) {
 		// Barnkontona, för att koppla en profil till ett konto.
 		accs := []account{}
 		for _, x := range s.userList {
-			if x.Role == "child" {
+			if x.Role == "child" || x.PINRequired {
 				accs = append(accs, account{x.ID, x.Name})
 			}
 		}
@@ -255,7 +272,7 @@ func (s *server) authSetPIN(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) authUnlock(w http.ResponseWriter, r *http.Request) {
 	u := currentUser(r)
-	if u.Role != "parent" {
+	if u.Role != "parent" && !u.canUnlock {
 		apiError(w, http.StatusForbidden, "Föräldraläget är bara för föräldrar.")
 		return
 	}

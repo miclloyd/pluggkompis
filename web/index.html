@@ -1,5 +1,13 @@
 <title>Pluggkompis</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Pluggkompis">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f3f5fa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f131c" media="(prefers-color-scheme: dark)">
+<meta name="format-detection" content="telephone=no">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap">
@@ -65,7 +73,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .center { text-align: center; }
 .eyebrow { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); font-weight: 700; }
 
-.top { border-bottom: 1px solid var(--rule); background: var(--paper); }
+.top { border-bottom: 1px solid var(--rule); background: var(--paper); padding-top: env(safe-area-inset-top, 0px); }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .top-inner, .wrap { max-width: 760px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .top-inner { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 60px; }
 .top-actions { display: flex; align-items: center; gap: 8px; }

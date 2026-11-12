@@ -95,7 +95,8 @@ type server struct {
 	users    map[string][]User // login → användare (flera bara med egna enheter)
 	userList []User            // i konfigurationens ordning
 	index    []byte
-	host     string        // tailnet-namnet (fqdn); tomt = dev, http på loopback
+	host     string        // tailnet-namnet (fqdn) eller LAN-namnet; tomt = dev, http på loopback
+	lan      bool          // LAN-lyssnaren (skoldatorer): inloggning med kaka i stället för WhoIs
 	heavy    chan struct{} // samtidiga tunga anrop (filer, AI)
 }
 
@@ -122,9 +123,19 @@ func (a *server) routes() http.Handler {
 		writeJSON(w, http.StatusOK, clientConfig(a.ai != nil))
 	})
 	mux.HandleFunc("GET /api/auth", a.authStatus)
-	mux.HandleFunc("POST /api/auth/pin", a.authSetPIN)
-	mux.HandleFunc("POST /api/auth/unlock", a.authUnlock)
-	mux.HandleFunc("POST /api/auth/lock", a.authLock)
+	if a.lan {
+		mux.HandleFunc("POST /api/lan/login", a.lanLogin)
+		mux.HandleFunc("POST /api/lan/logout", a.lanLogout)
+	} else {
+		mux.HandleFunc("GET /api/lan/credentials", a.lanCredsList)
+		mux.HandleFunc("PUT /api/lan/credentials", a.lanCredsSet)
+		mux.HandleFunc("DELETE /api/lan/credentials/{account}", a.lanCredsDelete)
+	}
+	if !a.lan { // föräldraläget finns inte ens som väg på LAN
+		mux.HandleFunc("POST /api/auth/pin", a.authSetPIN)
+		mux.HandleFunc("POST /api/auth/unlock", a.authUnlock)
+		mux.HandleFunc("POST /api/auth/lock", a.authLock)
+	}
 	mux.HandleFunc("GET /api/store/{path...}", a.storeGet)
 	mux.HandleFunc("PUT /api/store/{path...}", a.storeSet)
 	mux.HandleFunc("PATCH /api/store/{path...}", a.storeUpdate)
@@ -133,14 +144,20 @@ func (a *server) routes() http.Handler {
 		a.heavy = make(chan struct{}, 3)
 	}
 	mux.HandleFunc("POST /api/ai", a.limitHeavy(a.aiHandler))
-	mux.HandleFunc("GET /api/usage", a.usage)
+	if !a.lan {
+		mux.HandleFunc("GET /api/usage", a.usage)
+	}
 	mux.HandleFunc("POST /api/files", a.limitHeavy(a.filePut))
 	mux.HandleFunc("GET /api/files/{id}", a.limitHeavy(a.fileGet))
 	mux.HandleFunc("DELETE /api/files/{id}", a.fileDelete)
 	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "finns inte")
 	})
-	return a.checkHost(a.identify(a.sameOrigin(headers(mux))))
+	id := a.identify
+	if a.lan {
+		id = a.lanIdentify
+	}
+	return a.checkHost(id(a.sameOrigin(headers(mux))))
 }
 
 // checkHost: bara appens eget namn (skydd mot DNS-rebinding: en främmande
@@ -239,6 +256,9 @@ func (a *server) identify(next http.Handler) http.Handler {
 				u, ok = c, true
 				break
 			}
+		}
+		if ok && u.PINRequired && !a.auth.unlocked(r, u.Login) {
+			u.Role, u.canUnlock = "child", true
 		}
 		if !ok {
 			log.Printf("nekad: login %q nod %q", id.login, id.node)

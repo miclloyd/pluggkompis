@@ -91,6 +91,14 @@ export async function createServerAdapters(config) {
     // AI-förbrukningen per barn och prov (bara upplåst föräldraläge).
     usage: () => call('GET', '/api/usage'),
     // PIN och roll sköts av servern (auth.js beskriver gränssnittet).
+    // Skoldatorer på hemnätet (LAN): barnets inloggning, och förälderns hantering via tailnätet.
+    lan: {
+      login: (username, password) => post('/api/lan/login', { username, password }),
+      logout: () => post('/api/lan/logout'),
+      list: () => call('GET', '/api/lan/credentials'),
+      set: (account, username, password) => call('PUT', '/api/lan/credentials', { account, username, password }),
+      remove: account => call('DELETE', `/api/lan/credentials/${account}`),
+    },
     auth: {
       status: () => call('GET', '/api/auth'),
       setPin: pin => post('/api/auth/pin', { pin }),

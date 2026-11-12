@@ -64,7 +64,7 @@ function App() {
   const [theme, setTheme] = useState(() => lsGet('pk.theme') || 'auto');
 
   useEffect(() => {
-    loadEnvironment().then(e => { const repo = createRepo(e.store); setEnv({ ...e, repo, auth: e.auth || createLocalAuth(repo) }); }).catch(e => setBootErr(errText(e)));
+    loadEnvironment().then(async e => { const repo = createRepo(e.store); const auth = e.auth || createLocalAuth(repo); const st = await auth.status().catch(() => ({})); setEnv({ ...e, repo, auth, onLan: !!st.lan && !!st.loggedIn }); }).catch(e => setBootErr(errText(e)));
   }, []);
   useEffect(() => { applyTheme(theme); }, [theme]);
   // Barnets eget val gäller när barnet är inne i appen.
@@ -106,6 +106,7 @@ function App() {
       <div class="top-inner">
         <button class="wordmark" onClick=${() => go({ name: 'start' })} aria-label="Till startsidan">Pluggkompis</button>
         <span class="top-actions">
+          ${env.onLan && html`<button class="btn ghost small" onClick=${() => env.lan.logout().catch(() => {}).then(() => location.reload())}>Logga ut</button>`}
           ${parentOk && html`<button class="btn ghost small" onClick=${() => env.auth.lock().then(() => { setParentOk(false); go({ name: 'start' }); }).catch(x => alert('Föräldraläget kunde inte låsas: ' + errText(x)))}>Lås föräldraläget</button>`}
           <${ThemeButton} mode=${theme} onChange=${changeTheme} />
         </span>
@@ -142,16 +143,21 @@ function Start({ env, go }) {
   }, []);
   // En känd barnenhet går direkt till sin profil (plan 1.6, fas 3).
   useEffect(() => {
-    if (auth?.role === 'child' && auth.hasPin && profiles?.length === 1) go({ name: 'child', profileId: profiles[0].id });
+    if (auth?.role === 'child' && !auth.canUnlock && auth.hasPin && profiles?.length === 1) go({ name: 'child', profileId: profiles[0].id });
   }, [auth, profiles]);
   if (!profiles || auth === undefined) return html`<p class="muted">Laddar…</p>`;
-  const isChild = auth?.role === 'child';
+  if (auth?.lan && !auth.loggedIn) return html`<${LanLogin} env=${env} />`;
+  const isChild = auth?.role === 'child' && !auth.canUnlock; // canUnlock: förälder på arbetsdatorn (PIN krävs)
   if (!auth?.hasPin) {
     return isChild
       ? html`<section class="hero"><h1>Pluggkompis är inte igång än</h1><p class="lead">Be en förälder starta Pluggkompis först.</p></section>`
       : html`<${Onboarding} env=${env} go=${go} />`;
   }
   if (isChild && profiles.length === 1) return html`<p class="muted">Laddar…</p>`;
+  if (auth?.canUnlock && !profiles.length) {
+    return html`<section class="hero"><h1>Pluggkompis</h1><p class="lead">Här ser du bara testprofiler. Lås upp föräldraläget för att arbeta med barnens prov.</p></section>
+      <p class="center parent-link"><button class="btn primary" onClick=${() => go({ name: 'parent' })}>Förälder</button></p>`;
+  }
   if (isChild && !profiles.length) {
     return html`<section class="hero"><h1>Hej!</h1><p class="lead">Ditt konto är inte kopplat till någon profil än. Be en förälder koppla det under Föräldraläge → Barn.</p></section>`;
   }
@@ -170,6 +176,34 @@ function Start({ env, go }) {
         </button>`)}
     </div>
     ${!isChild && html`<p class="center parent-link"><button class="btn ghost small" onClick=${() => go({ name: 'parent' })}>Förälder</button></p>`}`;
+}
+
+// Skoldatorn på hemnätet: barnet loggar in med sitt användarnamn och lösenord.
+function LanLogin({ env }) {
+  const [u, setU] = useState('');
+  const [p, setPw] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setErr('');
+    try {
+      const r = await env.lan.login(u.trim(), p);
+      if (r.ok) { location.reload(); return; }
+      setErr(r.waitSeconds ? `Fel för många gånger. Vänta ${Math.ceil(r.waitSeconds / 60)} min och försök igen.` : 'Fel användarnamn eller lösenord.');
+      setPw('');
+    } catch (x) { setErr(errText(x)); }
+    setBusy(false);
+  }
+  return html`<section class="hero"><h1>Logga in</h1><p class="lead">Skriv ditt användarnamn och lösenord för Pluggkompis.</p></section>
+    <form class="sheet form narrow" onSubmit=${submit}>
+      <label for="lan-u">Användarnamn</label>
+      <input id="lan-u" autocomplete="username" autocapitalize="off" spellcheck="false" value=${u} onInput=${e => setU(e.target.value)} />
+      <label for="lan-p">Lösenord</label>
+      <input id="lan-p" type="password" autocomplete="current-password" value=${p} onInput=${e => setPw(e.target.value)} />
+      ${err && html`<p class="notice bad">${err}</p>`}
+      <div class="actions"><button class="btn primary" disabled=${busy || !u.trim() || !p}>Logga in</button></div>
+    </form>`;
 }
 
 function Onboarding({ env, go }) {
@@ -379,6 +413,7 @@ function ProfileForm({ env, profile, accounts, profiles = [], onDone }) {
         ${accounts.map(a => html`<option value=${a.id} disabled=${profiles.some(x => x.id !== p.id && x.account === a.id)}>${a.name}</option>`)}
       </select>
       <p class="hint">Med ett konto ser barnet bara sina egna prov på sin egen enhet.</p></div>`}
+    ${accounts && env.lan && profile.account && !profile.isNew && html`<${LanCredentials} env=${env} account=${profile.account} />`}
     <div class="swatches" role="radiogroup" aria-label="Färg">
       ${COLORS.map(c => html`<button type="button" role="radio" aria-checked=${p.color === c} class=${'swatch' + (p.color === c ? ' on' : '')} style=${`--c:${c}`} onClick=${() => setP({ ...p, color: c })} aria-label="Färg"></button>`)}
     </div>
@@ -399,6 +434,37 @@ function ProfileForm({ env, profile, accounts, profiles = [], onDone }) {
     </fieldset>
     <div class="actions"><button type="button" class="btn ghost" onClick=${onDone}>Avbryt</button><button class="btn primary">Spara</button></div>
   </form>`;
+}
+
+// Inloggning på skoldator (hemnätet) för barnets konto. Sätts bara här, i upplåst föräldraläge.
+function LanCredentials({ env, account }) {
+  const [cur, setCur] = useState(undefined);
+  const [u, setU] = useState('');
+  const [p, setPw] = useState('');
+  const [msg, setMsg] = useState(null);
+  const load = () => env.lan.list().then(l => { const c = l.find(x => x.account === account) || null; setCur(c); setU(c?.username || ''); }).catch(() => setCur(null));
+  useEffect(() => { load(); }, [account]);
+  if (cur === undefined) return null;
+  const save = async () => {
+    setMsg(null);
+    try { await env.lan.set(account, u.trim(), p); setPw(''); setMsg({ ok: true, text: 'Sparat. Skoldatorer som var inloggade har loggats ut.' }); load(); }
+    catch (x) { setMsg({ ok: false, text: errText(x) }); }
+  };
+  const remove = async () => { await env.lan.remove(account).catch(() => {}); setPw(''); setMsg({ ok: true, text: 'Inloggningen är borttagen.' }); load(); };
+  return html`<fieldset class="schedule">
+    <legend>Inloggning på skoldator</legend>
+    <p class="hint">För skoldatorn när den är på hemmets wifi. ${cur ? `Användarnamn i dag: ${cur.username}.` : 'Ingen inloggning än.'}</p>
+    <div class="row2">
+      <div><label for="lc-u">Användarnamn</label><input id="lc-u" autocapitalize="off" spellcheck="false" value=${u} onInput=${e => setU(e.target.value)} /></div>
+      <div><label for="lc-p">${cur ? 'Nytt lösenord' : 'Lösenord'}</label><input id="lc-p" type="password" autocomplete="new-password" value=${p} onInput=${e => setPw(e.target.value)} /></div>
+    </div>
+    <p class="hint">Minst 8 tecken, eller en PIN på 6 siffror. Ett nytt lösenord loggar ut skoldatorn.</p>
+    <div class="actions">
+      ${cur && html`<button type="button" class="btn ghost" onClick=${remove}>Ta bort inloggningen</button>`}
+      <button type="button" class="btn primary" disabled=${!u.trim() || !p} onClick=${save}>${cur ? 'Byt lösenord' : 'Skapa inloggning'}</button>
+    </div>
+    ${msg && html`<p class=${'notice ' + (msg.ok ? '' : 'bad')}>${msg.text}</p>`}
+  </fieldset>`;
 }
 
 function NewTestForm({ env, profiles, onCancel, onCreated }) {

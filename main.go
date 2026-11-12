@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -25,7 +26,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-var version = "0.12.1"
+var version = "0.13.0"
 
 // User: ett Tailscale-konto som får använda appen. Devices (stable ID) är
 // valfritt; anges det måste även enheten stämma. Det behövs för den förälder som
@@ -36,6 +37,11 @@ type User struct {
 	Name    string   `json:"name"`
 	Role    string   `json:"role"` // parent | child
 	Devices []string `json:"devices,omitempty"`
+	// PINRequired: en förälder på en delad dator (arbetsdatorn, där Claude kör). Utan
+	// upplåst föräldraläge är kontot ett barnkonto som bara ser profiler kopplade till
+	// kontots id (testprofilen); med PIN är det förälder som vanligt.
+	PINRequired bool `json:"pinRequired,omitempty"`
+	canUnlock   bool // satt av identify för ett PINRequired-konto i barnläge
 }
 
 type Config struct {
@@ -98,6 +104,11 @@ func main() {
 	demo := flag.Bool("demo", false, "fyll en tom databas med exempelprovet (examples/)")
 	aiKeyFile := flag.String("anthropic-key-file", "", "API-nyckel till Anthropic (tom = ingen AI)")
 	devAIURL := flag.String("dev-ai-url", "", "låtsas-AI i stället för Anthropic (bara med -dev)")
+	lanAddr := flag.String("lan-addr", "", "LAN-lyssnare för skoldatorer, t.ex. :443 (tom = av)")
+	lanHTTP := flag.String("lan-http-addr", "", "omdirigering http → https på LAN, t.ex. :80")
+	lanHost := flag.String("lan-host", "", "LAN-namnet, t.ex. plugg.example.se (krävs med -lan-addr)")
+	lanCert := flag.String("lan-cert", "", "certifikat (PEM, fullchain) för LAN-namnet")
+	lanKey := flag.String("lan-key", "", "nyckel (PEM) för LAN-certifikatet")
 	devAs := flag.String("dev-as", "parent", "dev-identitetens roll: parent | child (barnet heter devbarn)")
 	flag.Parse()
 
@@ -136,6 +147,33 @@ func main() {
 		}
 	}
 	a := &server{st: st, auth: auth, index: index}
+	startLAN := func() {
+		if *lanAddr == "" {
+			return
+		}
+		if *lanHost == "" || *lanCert == "" || *lanKey == "" {
+			log.Fatal("-lan-addr kräver -lan-host, -lan-cert och -lan-key")
+		}
+		cert, err := tls.LoadX509KeyPair(*lanCert, *lanKey)
+		if err != nil {
+			log.Fatal(err)
+		}
+		l := *a // samma lagring, inloggning och AI; egen identitet och eget värdnamn
+		l.lan, l.host = true, *lanHost
+		srv := &http.Server{Addr: *lanAddr, Handler: l.routes(), ReadHeaderTimeout: 10 * time.Second,
+			TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}}
+		go func() { log.Fatal(srv.ListenAndServeTLS("", "")) }()
+		if *lanHTTP != "" {
+			go func() {
+				red := &http.Server{Addr: *lanHTTP, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second,
+					Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						http.Redirect(w, r, "https://"+*lanHost+"/", http.StatusMovedPermanently)
+					})}
+				log.Fatal(red.ListenAndServe())
+			}()
+		}
+		log.Printf("LAN: https://%s/ på %s", *lanHost, *lanAddr)
+	}
 	setupAI := func(key string, c Config) {
 		if key == "" {
 			log.Print("ingen API-nyckel: AI är avstängt")
@@ -172,6 +210,7 @@ func main() {
 		} else {
 			setupAI(readKey(*aiKeyFile), Config{})
 		}
+		startLAN()
 		log.Printf("pluggkompis %s (dev): http://%s/", version, *dev)
 		srv := &http.Server{Addr: *dev, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 		log.Fatal(srv.ListenAndServe())
@@ -227,6 +266,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	startLAN()
 	log.Printf("pluggkompis lyssnar på https://%s", fqdn)
 	srv := &http.Server{Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.Serve(ln))

@@ -484,39 +484,57 @@ func TestTaskVersionsAppendOnly(t *testing.T) {
 	}
 }
 
-// Ett testkonto i barnroll på förälderns workstation: samma login, egen enhet.
+// Föräldern på arbetsdatorn: barnläge (bara testprofilen) tills PIN, sedan förälder.
 func TestDeviceScopedTestAccount(t *testing.T) {
 	a, h := testServer(t)
 	a.setUsers([]User{
 		{ID: "mamma", Login: "forälder@github", Role: "parent", Devices: []string{"nTELEFON"}},
-		{ID: "test", Login: "forälder@github", Role: "child", Devices: []string{"nSERVER"}}, // 1.1.1.2 = "workstation"
+		{ID: "test", Login: "forälder@github", Role: "parent", PINRequired: true, Devices: []string{"nSERVER"}}, // 1.1.1.2 = arbetsdatorn
 		{ID: "barn1", Login: "barn@github", Role: "child"},
 		{ID: "barn2", Login: "barn2@github", Role: "child"},
 	})
 	pc := seedFamily(t, h)
 	doC(h, parent, "PUT", "/api/store/profiles/pt", `{"name":"Test","grade":5,"account":"test"}`, pc)
 	ws := "1.1.1.2:1"
+	if b := do(h, ws, "GET", "/api/auth", "").Body.String(); !strings.Contains(b, `"canUnlock":true`) || !strings.Contains(b, `"role":"child"`) {
+		t.Fatalf("status låst: %s", b)
+	}
 	if got := ids(t, do(h, ws, "GET", "/api/store/profiles?list=1", "").Body.String()); got != "pt" {
-		t.Fatalf("workstationen ser: %q", got)
+		t.Fatalf("arbetsdatorn låst ser: %q", got)
 	}
 	for _, p := range []string{"profiles/p1", "tests/t1", "tests/t2/attempts?list=1"} {
 		if w := do(h, ws, "GET", "/api/store/"+p, ""); w.Code != 403 {
-			t.Errorf("workstationen läser %s: %d", p, w.Code)
+			t.Errorf("arbetsdatorn låst läser %s: %d", p, w.Code)
 		}
 	}
-	if w := do(h, ws, "POST", "/api/auth/unlock", `{"pin":"1234"}`); w.Code != 403 {
-		t.Errorf("workstationen låser upp föräldraläget: %d", w.Code)
+	// Telefonens upplåsta kaka gäller inte arbetsdatorns barnläge förrän den själv låst upp.
+	// (Kakan är knuten till kontot, så samma kaka låser upp; det är samma förälder.)
+	if w := do(h, ws, "POST", "/api/auth/unlock", `{"pin":"0000"}`); strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Fatal("fel PIN låste upp")
 	}
-	// Även med telefonens upplåsta kaka (samma login) är workstationen ett barn.
-	if w := doC(h, ws, "GET", "/api/store/profiles/p1", "", pc); w.Code != 403 {
-		t.Errorf("workstationen med förälderns kaka: %d", w.Code)
+	w := do(h, ws, "POST", "/api/auth/unlock", `{"pin":"1234"}`)
+	var wc *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == sessionCookie && c.Value != "" {
+			wc = c
+		}
 	}
-	if w := doC(h, ws, "PUT", "/api/store/tests/t1/goals/gx", `{}`, pc); w.Code != 403 {
-		t.Errorf("workstationen skriver med förälderns kaka: %d", w.Code)
+	if wc == nil {
+		t.Fatalf("PIN på arbetsdatorn: %s", w.Body)
 	}
-	// Telefonen är fortfarande förälder.
-	if got := ids(t, do(h, parent, "GET", "/api/store/profiles?list=1", "").Body.String()); got != "p1,p2,p3,pt" {
-		t.Errorf("telefonen ser: %q", got)
+	if got := ids(t, doC(h, ws, "GET", "/api/store/profiles?list=1", "", wc).Body.String()); got != "p1,p2,p3,pt" {
+		t.Fatalf("arbetsdatorn upplåst ser: %q", got)
+	}
+	if w := doC(h, ws, "PUT", "/api/store/tests/t1/goals/gx", `{}`, wc); w.Code != 204 {
+		t.Fatalf("arbetsdatorn upplåst skriver: %d", w.Code)
+	}
+	doC(h, ws, "POST", "/api/auth/lock", "", wc)
+	if got := ids(t, doC(h, ws, "GET", "/api/store/profiles?list=1", "", wc).Body.String()); got != "pt" {
+		t.Fatalf("efter låsning: %q", got)
+	}
+	// Telefonen är fortfarande förälder, och testkontot syns som kopplingsbart konto.
+	if b := doC(h, parent, "GET", "/api/auth", "", unlock(t, h)).Body.String(); !strings.Contains(b, `"id":"test"`) {
+		t.Errorf("konton: %s", b)
 	}
 }
 
