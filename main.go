@@ -27,7 +27,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-var version = "0.19.0"
+var version = "0.20.0"
 
 // User: ett Tailscale-konto som får använda appen. Devices (stable ID) är
 // valfritt; anges det måste även enheten stämma. Det behövs för den förälder som
@@ -119,6 +119,7 @@ func main() {
 	lanKey := flag.String("lan-key", "", "nyckel (PEM) för LAN-certifikatet")
 	priceRefresh := flag.Bool("price-refresh", true, "hämta AI-priser och växelkurs en gång i veckan (av med -dev om inte satt)")
 	devAs := flag.String("dev-as", "parent", "dev-identitetens roll: parent | child (barnet heter devbarn)")
+	summaryPath := flag.String("progress-summary", "", "skriv framstegssammanfattningen (JSON) hit var tionde minut (tom = av)")
 	flag.Parse()
 	if *dev != "" {
 		// Lokalt hämtas priserna bara om flaggan sätts uttryckligen.
@@ -162,6 +163,9 @@ func main() {
 		}
 	}
 	a := &server{st: st, auth: auth, index: index}
+	if *summaryPath != "" {
+		go runSummary(st, *summaryPath)
+	}
 	startLAN := func() {
 		if *lanAddr == "" {
 			return
