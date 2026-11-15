@@ -99,15 +99,17 @@ type summarySchedule struct {
 	TrainingDays []int `json:"trainingDays"`
 	Training     []int `json:"training"`
 	Free         []int `json:"free"`
+	RestDays     []int `json:"restDays"` // null = standard (lördag, söndag); [] = inga lediga veckodagar
 }
 
 type summaryProfile struct {
-	Name      string           `json:"name"`
-	BirthYear int              `json:"birthYear,omitempty"`
-	Schedule  *summarySchedule `json:"schedule,omitempty"`
-	Days      []summaryDay     `json:"days"` // de senaste 28 dagarna, nyaste först, bara dagar med svar
-	Tests     []summaryTest    `json:"tests"`
-	Tasks     int              `json:"tasks"` // egna skoluppgifter
+	Name       string           `json:"name"`
+	BirthYear  int              `json:"birthYear,omitempty"`
+	MaxMinutes int              `json:"maxMinutes,omitempty"` // eget dagstak; 0 = efter årskurs (web/plan.js ageCap)
+	Schedule   *summarySchedule `json:"schedule,omitempty"`
+	Days       []summaryDay     `json:"days"` // de senaste 28 dagarna, nyaste först, bara dagar med svar
+	Tests      []summaryTest    `json:"tests"`
+	Tasks      int              `json:"tasks"` // egna skoluppgifter
 }
 
 type progressSummary struct {
@@ -172,8 +174,10 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 			TrainingDays []num `json:"trainingDays"`
 			Training     []num `json:"training"`
 			Free         []num `json:"free"`
+			RestDays     []num `json:"restDays"`
 		} `json:"schedule"`
-		CreatedAt num `json:"createdAt"`
+		MaxMinutes num `json:"maxMinutes"`
+		CreatedAt  num `json:"createdAt"`
 	}
 	type test struct {
 		ID        string   `json:"id"`
@@ -362,7 +366,7 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 		Skipped:  skipped,
 	}
 	for _, p := range profiles {
-		sp := summaryProfile{Name: p.Name, BirthYear: p.BirthYear.int(), Days: []summaryDay{}, Tests: testsBy[p.ID]}
+		sp := summaryProfile{Name: p.Name, BirthYear: p.BirthYear.int(), MaxMinutes: p.MaxMinutes.int(), Days: []summaryDay{}, Tests: testsBy[p.ID]}
 		if p.Schedule != nil {
 			ints := func(l []num) []int {
 				out := make([]int, 0, len(l))
@@ -372,6 +376,9 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 				return out
 			}
 			sp.Schedule = &summarySchedule{TrainingDays: ints(p.Schedule.TrainingDays), Training: ints(p.Schedule.Training), Free: ints(p.Schedule.Free)}
+			if p.Schedule.RestDays != nil {
+				sp.Schedule.RestDays = ints(p.Schedule.RestDays)
+			}
 		}
 		if sp.Tests == nil {
 			sp.Tests = []summaryTest{}

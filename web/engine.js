@@ -52,7 +52,7 @@ export function refreshMastery(goal, m, bank) {
 
 const DAY = 864e5;
 const BOX_DAYS = [0, 1, 3, 7];          // Leitner: låda 0 = samma pass, sedan 1, 3, 7 dagar
-const RETRY_MS = 4 * 60e3;              // en miss kommer tillbaka efter några minuter
+export const RETRY_MS = 4 * 60e3;       // ett missat mål blir aktuellt igen efter några minuter
 
 export function shrinkFactor(now, testDate) {
   if (!testDate) return 1;
@@ -233,7 +233,10 @@ export function hasSpellingLure(item) {
   });
 }
 
-export function pickNext({ goals, masteryById, banks, recent = [], now, rand = Math.random }) {
+//   targets: målnivå per mål från dagsplanen när ambitionen är sänkt (plan.targets). Ett mål som
+//   klarat sin målnivå (står på nivån över) kommer efter de andra, men repeteras fortfarande.
+//   Samma gräns som remainingWork i plan.js: nivån man står på räknas som kvar.
+export function pickNext({ goals, masteryById, banks, recent = [], now, rand = Math.random, targets = {} }) {
   const candidates = [];
   for (const g of goals) {
     const m = refreshMastery(g, masteryById[g.id], banks[g.id]) || newMastery(g.id);
@@ -250,6 +253,7 @@ export function pickNext({ goals, masteryById, banks, recent = [], now, rand = M
     score -= m.level * 10;
     score += (g.weight || 2) * 6;
     score -= recentGoal ? 60 : 0;
+    score -= targets[g.id] && m.level > targets[g.id] && !m.passedMax ? 80 : 0;
     score += rand() * 12;
     candidates.push({ g, m, items, score });
   }

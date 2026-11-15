@@ -8,8 +8,46 @@
 //   Lugnt      dagen före provet: kort repetition, inget nytt
 
 import { practiceMax, dayKey } from './engine.js';
+import { gradeOf } from './grade.js';
 
 export const DEFAULT_SCHEDULE = { trainingDays: [], training: [15, 30], free: [20, 60] };
+export const REST_DAYS = [5, 6]; // lördag och söndag: ingen dagsplan om inget annat är valt
+
+// Ledig/Plugga för en dag i provets plan (förälderns knapp). offDates går före allt; en ledig
+// veckodag (schedule.restDays) blir pluggdag via studyDates. Returnerar ändringen av provet.
+export function toggleDay(day, offDates = [], studyDates = []) {
+  const without = (l, k) => l.filter(x => x !== k);
+  if (offDates.includes(day.key)) return { offDates: without(offDates, day.key) };
+  if (day.restDay && studyDates.includes(day.key)) return { studyDates: without(studyDates, day.key) };
+  if (day.off && day.restDay) return { studyDates: [...studyDates, day.key] };
+  return { offDates: [...offDates, day.key] };
+}
+
+// Tak per dag efter årskurs. Skolan är den stora källan till kunskap; hemmaplugget är ett
+// komplement och ska rymmas klart under tumregeln 10 minuter × årskurs för allt hemarbete
+// (läxor inräknade). Taket gäller alltid: räcker tiden inte sänks ambitionen, inte vilan.
+export function ageCap(grade) {
+  if (!Number.isFinite(grade)) return 10; // okänd årskurs: lägsta taket
+  return grade <= 3 ? 10 : grade <= 6 ? 20 : 30;
+}
+
+// Schemat som planen räknar med: profilens val, standard för det som saknas, dagstaket
+// (profilens maxMinutes eller taket för årskursen) och lediga veckodagar.
+export function scheduleFor(profile, now = Date.now()) {
+  const s = { ...DEFAULT_SCHEDULE, ...(profile?.schedule || {}) };
+  const own = Number(profile?.maxMinutes);
+  return { ...s, cap: own > 0 ? own : ageCap(gradeOf(profile, new Date(now))), restDays: s.restDays ?? REST_DAYS };
+}
+
+// Ambition när allt inte ryms inom taket: först lägre mål för mål med lägre vikt, sedan för alla.
+// Vikt 3 = de viktigaste målen enligt läraren/underlaget.
+const AMBITION = [
+  { label: null, target: () => null },
+  { label: 'Mål med lägre vikt övas till nivå 3.', target: g => ((g.weight || 2) < 3 ? 3 : null) },
+  { label: 'Mål med lägre vikt övas till nivå 2.', target: g => ((g.weight || 2) < 3 ? 2 : null) },
+  { label: 'De viktigaste målen övas till nivå 3, övriga till nivå 2.', target: g => ((g.weight || 2) < 3 ? 2 : 3) },
+  { label: 'Alla mål övas till nivå 2.', target: () => 2 },
+];
 export const WEEKDAYS = ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön']; // index 0 = måndag
 
 const PHASE = {
@@ -61,14 +99,17 @@ export function minutesOnDay(attempts, key) {
 }
 
 // Återstående arbete i sekunder: nivåer kvar per mål, gånger svar per nivå och tempo.
-export function remainingWork({ goals, mastery, banks, secs }) {
+//   targets: högsta nivå att öva till per mål (saknas = målets högsta nivå)
+export function remainingWork({ goals, mastery, banks, secs, targets = {} }) {
   let seconds = 0;
   for (const g of goals) {
     const bank = banks[g.id] || [];
-    const max = practiceMax(g, bank);
+    const top = practiceMax(g, bank);
+    const max = targets[g.id] ? Math.min(top, targets[g.id]) : top;
     const m = mastery[g.id];
     const level = m?.level || 1;
-    if (m?.passedMax && level >= max) continue;
+    if (m?.passedMax && level >= top) continue;
+    if (level > max) continue;
     for (let l = level; l <= max; l++) {
       const items = bank.filter(i => i.level === l);
       if (!items.length) continue;
@@ -102,8 +143,10 @@ function phases(n) {
 const round5 = x => Math.max(5, Math.round(x / 5) * 5);
 
 // Bygger planen från i dag till dagen före provet.
-//   offDates: dagar utan plugg ('YYYY-MM-DD')
-export function buildPlan({ test, goals, mastery, banks, attempts, schedule = DEFAULT_SCHEDULE, offDates = [], now = Date.now() }) {
+//   offDates:   dagar utan plugg ('YYYY-MM-DD')
+//   studyDates: lediga veckodagar (schedule.restDays) som ändå blir pluggdagar
+//   schedule:   helst scheduleFor(profile): med cap (minuter per dag) och restDays
+export function buildPlan({ test, goals, mastery, banks, attempts, schedule = DEFAULT_SCHEDULE, offDates = [], studyDates = [], now = Date.now() }) {
   if (!test.testDate) return null;
   const today = dayKey(now);
   // Planen börjar första övningsdagen, så faserna står still när planen räknas om.
@@ -113,7 +156,8 @@ export function buildPlan({ test, goals, mastery, banks, attempts, schedule = DE
   for (let t = Date.parse(start + 'T12:00:00'); dayKey(t) < test.testDate; t += 864e5) {
     const key = dayKey(t);
     const wd = weekdayIdx(key);
-    allDays.push({ key, weekday: wd, past: key < today, off: offDates.includes(key), training: (schedule.trainingDays || []).includes(wd) });
+    const restDay = (schedule.restDays || []).includes(wd);
+    allDays.push({ key, weekday: wd, past: key < today, restDay, off: offDates.includes(key) || (restDay && !studyDates.includes(key)), training: (schedule.trainingDays || []).includes(wd) });
   }
   for (const d of allDays) d.done = minutesOnDay(attempts, d.key);
   const days = allDays.filter(d => !d.past);
@@ -126,19 +170,31 @@ export function buildPlan({ test, goals, mastery, banks, attempts, schedule = DE
   const introEnd = activeAll[Math.max(0, Math.ceil(activeAll.length * 0.4) - 1)]?.key || today;
 
   const secs = secondsPerAnswer(attempts);
-  const work = remainingWork({ goals, mastery, banks, secs });
   const doneToday = minutesOnDay(attempts, today);
-  if (!active.length) return { days, allDays, start, introEnd, today: null, totalMinutes: Math.round(work.seconds / 60), shortfall: Math.round(work.seconds / 60), secs };
-  const needMin = (work.seconds + work.repetitionPerDay * active.length) / 60 + doneToday;
+  const cap = schedule.cap > 0 ? schedule.cap : Infinity;
 
   // Fördela efter vikt, inom dagens tak. Bekanta-dagar hålls på lägsta nivån i spannet,
-  // lugna dagar högst 15 minuter.
+  // lugna dagar högst 15 minuter. Taket (cap) gäller alla dagar.
   const caps = active.map(d => {
-    const [lo, hi] = d.training ? schedule.training : schedule.free;
+    const [lo0, hi0] = d.training ? schedule.training : schedule.free;
+    const hi = Math.min(hi0, cap);
+    const lo = Math.min(lo0, hi);
     if (d.phase === 'bekanta') return [Math.min(10, lo), lo];
     if (d.phase === 'lugnt') return [5, Math.min(15, lo)];
     return [Math.min(10, lo), hi];
   });
+  // Den högsta ambitionen som ryms inom dagarnas tak (minus det som redan är gjort i dag).
+  const room = caps.reduce((a, c) => a + c[1], 0) - doneToday;
+  let aim = AMBITION[0], targets = {}, work;
+  for (const step of active.length ? AMBITION : AMBITION.slice(0, 1)) {
+    const t = {};
+    for (const g of goals) { const v = step.target(g); if (v) t[g.id] = v; }
+    const w = remainingWork({ goals, mastery, banks, secs, targets: t });
+    aim = step; targets = t; work = w;
+    if ((w.seconds + w.repetitionPerDay * active.length) / 60 <= room + 0.5) break;
+  }
+  if (!active.length) return { days, allDays, start, introEnd, today: null, totalMinutes: Math.round(work.seconds / 60), shortfall: Math.round(work.seconds / 60), secs, cap, aim: aim.label, targets };
+  const needMin = (work.seconds + work.repetitionPerDay * active.length) / 60 + doneToday;
   const w = active.map(d => PHASE[d.phase].weight);
   let base = needMin / w.reduce((a, b) => a + b, 0);
   let mins = active.map((_, i) => Math.min(caps[i][1], Math.max(caps[i][0], w[i] * base)));
@@ -151,7 +207,8 @@ export function buildPlan({ test, goals, mastery, banks, attempts, schedule = DE
     if (total <= 0) break;
     mins = mins.map((m, i) => m + Math.min(room[i], short * room[i] / total));
   }
-  active.forEach((d, i) => { d.minutes = round5(mins[i]); d.range = caps[i]; });
+  // Hela femminuter, men aldrig över dagens tak (ett eget tak kan vara t.ex. 12).
+  active.forEach((d, i) => { d.minutes = Math.min(caps[i][1], round5(mins[i])); d.range = caps[i]; });
   const planned = active.reduce((a, d) => a + d.minutes, 0);
 
   return {
@@ -163,6 +220,9 @@ export function buildPlan({ test, goals, mastery, banks, attempts, schedule = DE
     totalMinutes: Math.round(needMin),
     shortfall: Math.max(0, Math.round(needMin - planned)),
     secs,
+    cap,          // minuter per dag som mest
+    aim: aim.label, // null = alla mål till högsta nivån; annars vad planen siktar på
+    targets,      // målnivå per mål när ambitionen är sänkt
   };
 }
 

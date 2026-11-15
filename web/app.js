@@ -22,14 +22,14 @@ import { Teach } from './teach.js';
 import { Sheet } from './sheet.js';
 import { TaskList, TaskView, ParentTasks, SUPPORT_LABEL } from './tasks.js';
 import { PrintSheet } from './print.js';
-import { buildPlan, allowedGoals, minutesOnDay, DEFAULT_SCHEDULE, WEEKDAYS, PHASE_LABEL } from './plan.js';
+import { buildPlan, allowedGoals, minutesOnDay, scheduleFor, ageCap, toggleDay, REST_DAYS, DEFAULT_SCHEDULE, WEEKDAYS, PHASE_LABEL } from './plan.js';
 import { interpretMaterial, proposeGoals, buildBank, buildHighBank, buildSortBank, reviewTest, reviewGoalItems, StepError } from './pipeline.js';
 import { highLevelsFor } from './prompts.js';
 import { gradeFree, regradeOnDispute, TIERS } from './grading.js';
 import {
   GOAL_TYPES, TYPE_LABEL, practiceMax, childGoal, parsePages, newMastery, applyResult, gradeLocal, correctAnswerText,
   pickNext, testProgress, goalProgress, allMastered, shuffle, replayMastery, isFree,
-  canJump, jumpUp, dayKey,
+  canJump, jumpUp, dayKey, RETRY_MS,
 } from './engine.js';
 
 const SESSION_LENGTH = 12;
@@ -438,18 +438,21 @@ function ProfileForm({ env, profile, accounts, profiles = [], onDone }) {
     ...profile,
     birthYear: profile.birthYear || birthYearFor(profile.grade || 5),
     gradeOffset: profile.gradeOffset || 0,
-    schedule: { ...DEFAULT_SCHEDULE, ...(profile.schedule || {}) },
+    schedule: (s => ({ ...s, training: s.training.map(v => Math.min(60, v)), free: s.free.map(v => Math.min(60, v)) }))({ ...DEFAULT_SCHEDULE, restDays: REST_DAYS, ...(profile.schedule || {}) }),
   });
   const sch = p.schedule;
   const setSch = patch => setP({ ...p, schedule: { ...sch, ...patch } });
-  const toggleDay = i => setSch({ trainingDays: sch.trainingDays.includes(i) ? sch.trainingDays.filter(x => x !== i) : [...sch.trainingDays, i] });
-  const range = (key, idx, v) => { const r = [...sch[key]]; r[idx] = Math.max(5, Math.min(120, Number(v) || 0)); setSch({ [key]: r }); };
+  const toggleTraining = i => setSch({ trainingDays: sch.trainingDays.includes(i) ? sch.trainingDays.filter(x => x !== i) : [...sch.trainingDays, i] });
+  const toggleRest = i => setSch({ restDays: sch.restDays.includes(i) ? sch.restDays.filter(x => x !== i) : [...sch.restDays, i] });
+  const capDefault = ageCap(gradeOf({ birthYear: Number(p.birthYear), gradeOffset: Number(p.gradeOffset) || 0 }));
+  const range = (key, idx, v) => { const r = [...sch[key]]; r[idx] = Math.max(5, Math.min(60, Number(v) || 0)); setSch({ [key]: r }); };
   async function save(e) {
     e.preventDefault();
     if (!p.name.trim()) return;
     const { isNew, grade, ...rest } = p; // grade sparas inte längre, den räknas fram
     const fix = r => (r[0] > r[1] ? [r[1], r[0]] : r);
-    await env.repo.saveProfile({ ...rest, name: p.name.trim(), birthYear: Number(p.birthYear), birthMonth: p.birthMonth ? Number(p.birthMonth) : null, gradeOffset: Number(p.gradeOffset) || 0, schedule: { ...sch, training: fix(sch.training), free: fix(sch.free) } });
+    const maxMinutes = Number(p.maxMinutes) > 0 ? Math.max(5, Math.min(60, Number(p.maxMinutes))) : undefined;
+    await env.repo.saveProfile({ ...rest, maxMinutes, name: p.name.trim(), birthYear: Number(p.birthYear), birthMonth: p.birthMonth ? Number(p.birthMonth) : null, gradeOffset: Number(p.gradeOffset) || 0, schedule: { ...sch, training: fix(sch.training), free: fix(sch.free) } });
     onDone();
   }
   return html`<form class="sheet form inset" onSubmit=${save}>
@@ -472,17 +475,23 @@ function ProfileForm({ env, profile, accounts, profiles = [], onDone }) {
     </div>
     <fieldset class="schedule">
       <legend>Pluggtid per dag</legend>
-      <p class="hint">Dagsplanen håller sig inom de här spannen. Hur mycket det blir beror på hur mycket som är kvar till provet.</p>
+      <p class="hint">Skolan är den stora källan till kunskap; plugget hemma är ett komplement. Dagsplanen går aldrig över taket. Räcker tiden inte siktar planen lägre i stället, med de viktigaste målen först.</p>
+      <div><label for="pf-cap">Högst minuter per dag</label>
+        <input id="pf-cap" type="number" inputmode="numeric" min="5" max="60" placeholder=${String(capDefault)} value=${p.maxMinutes || ''} onInput=${e => setP({ ...p, maxMinutes: e.target.value })} />
+        <p class="hint">Tomt = ${capDefault} minuter, som passar årskursen (10 min upp till åk 3, 20 min i åk 4–6, 30 min i åk 7–9).</p></div>
+      <p class="small"><strong>Lediga dagar</strong> (ingen dagsplan; ändra en enskild dag med Plugga i provets plan)</p>
+      <div class="weekdays">${WEEKDAYS.map((d, i) => html`<label class=${'wd' + (sch.restDays.includes(i) ? ' on' : '')}>
+        <input type="checkbox" checked=${sch.restDays.includes(i)} onChange=${() => toggleRest(i)} />${d}</label>`)}</div>
       <p class="small"><strong>Träningsdagar</strong></p>
       <div class="weekdays">${WEEKDAYS.map((d, i) => html`<label class=${'wd' + (sch.trainingDays.includes(i) ? ' on' : '')}>
-        <input type="checkbox" checked=${sch.trainingDays.includes(i)} onChange=${() => toggleDay(i)} />${d}</label>`)}</div>
+        <input type="checkbox" checked=${sch.trainingDays.includes(i)} onChange=${() => toggleTraining(i)} />${d}</label>`)}</div>
       <div class="row2">
         <div><span class="small"><strong>Dagar med träning</strong></span><span class="range-in">
-          <input aria-label="Minst minuter träningsdag" type="number" inputmode="numeric" min="5" max="120" value=${sch.training[0]} onInput=${e => range('training', 0, e.target.value)} /> –
-          <input aria-label="Högst minuter träningsdag" type="number" inputmode="numeric" min="5" max="120" value=${sch.training[1]} onInput=${e => range('training', 1, e.target.value)} /> min</span></div>
+          <input aria-label="Minst minuter träningsdag" type="number" inputmode="numeric" min="5" max="60" value=${sch.training[0]} onInput=${e => range('training', 0, e.target.value)} /> –
+          <input aria-label="Högst minuter träningsdag" type="number" inputmode="numeric" min="5" max="60" value=${sch.training[1]} onInput=${e => range('training', 1, e.target.value)} /> min</span></div>
         <div><span class="small"><strong>Övriga dagar</strong></span><span class="range-in">
-          <input aria-label="Minst minuter övriga dagar" type="number" inputmode="numeric" min="5" max="120" value=${sch.free[0]} onInput=${e => range('free', 0, e.target.value)} /> –
-          <input aria-label="Högst minuter övriga dagar" type="number" inputmode="numeric" min="5" max="120" value=${sch.free[1]} onInput=${e => range('free', 1, e.target.value)} /> min</span></div>
+          <input aria-label="Minst minuter övriga dagar" type="number" inputmode="numeric" min="5" max="60" value=${sch.free[0]} onInput=${e => range('free', 0, e.target.value)} /> –
+          <input aria-label="Högst minuter övriga dagar" type="number" inputmode="numeric" min="5" max="60" value=${sch.free[1]} onInput=${e => range('free', 1, e.target.value)} /> min</span></div>
       </div>
     </fieldset>
     <div class="actions"><button type="button" class="btn ghost" onClick=${onDone}>Avbryt</button><button class="btn primary">Spara</button></div>
@@ -729,11 +738,10 @@ function TestSetup({ env, go, testId }) {
 
   const ready = step === 'ready';
   const nQuestions = Object.values(banks).reduce((a, b) => a + b.length, 0);
-  const plan = ready ? buildPlan({ test, goals: activeGoals, mastery, banks, attempts, schedule: profile?.schedule || DEFAULT_SCHEDULE, offDates: test.offDates || [] }) : null;
-  const toggleOff = key => run('Sparar', async () => {
-    const off = test.offDates || [];
-    await repo.updateTest(testId, { offDates: off.includes(key) ? off.filter(k => k !== key) : [...off, key] });
-  });
+  const plan = ready ? buildPlan({ test, goals: activeGoals, mastery, banks, attempts, schedule: scheduleFor(profile), offDates: test.offDates || [], studyDates: test.studyDates || [] }) : null;
+  // Ledig/Plugga för en dag. offDates (förälderns lediga dagar) går före allt; en ledig veckodag
+  // (lördag, söndag) blir pluggdag via studyDates.
+  const toggleOff = d => run('Sparar', () => repo.updateTest(testId, toggleDay(d, test.offDates || [], test.studyDates || [])));
 
   const progressView = html`<${ParentProgress} goals=${activeGoals} banks=${banks} mastery=${mastery} attempts=${attempts} events=${events} chats=${chats} exams=${exams}
         onResolve=${(a, accept) => run('Sparar', async () => {
@@ -875,8 +883,9 @@ function PlanView({ plan, test, profile, onToggleOff, busy }) {
   const left = plan.days.filter(d => !d.off).reduce((a, d) => a + (d.minutes || 0), 0) - (plan.today?.done || 0);
   return html`<section class="block plan">
     <div class="block-head"><h2>Dagsplan</h2><span class="muted small">${profile?.schedule?.trainingDays?.length ? '' : 'Ange träningsdagar under Barn'}</span></div>
-    <p>Ungefär <strong>${Math.max(0, left)} minuter</strong> kvar fram till provet. Planen räknas om efter varje pass, så den anpassar sig om ${profile?.name || 'barnet'} ligger före eller efter.</p>
-    ${plan.shortfall > 0 && html`<p class="notice warn">Allt ryms inte inom tiderna: ungefär ${plan.shortfall} minuter saknas. Höj tiden för ${profile?.name || 'barnet'} under Barn, ta bort mål som är mindre viktiga, eller räkna med att de högsta nivåerna inte hinns med.</p>`}
+    <p>Ungefär <strong>${Math.max(0, left)} minuter</strong> kvar fram till provet, högst ${plan.cap} minuter om dagen. Planen räknas om efter varje pass, så den anpassar sig om ${profile?.name || 'barnet'} ligger före eller efter. Missade dagar gör inte de kommande passen längre.</p>
+    ${plan.aim && html`<p class="notice">Allt hinns inte till högsta nivån inom ${plan.cap} minuter om dagen, så planen siktar lägre: ${plan.aim} De viktigaste målen kommer först.</p>`}
+    ${plan.shortfall >= 5 && html`<p class="notice warn">${plan.aim ? 'Även med lägre mål saknas' : 'Allt ryms inte riktigt:'} ungefär ${plan.shortfall} minuter${plan.aim ? '' : ' saknas'}. Det är okej: ${profile?.name || 'barnet'} övar det som hinns, viktigaste målen först. Ta gärna bort mål som är mindre viktiga.</p>`}
     <ol class="plan-days">${plan.allDays.map(d => {
       const isToday = d.key === today;
       const planned = d.off ? 0 : (d.minutes || 0);
@@ -888,7 +897,7 @@ function PlanView({ plan, test, profile, onToggleOff, busy }) {
           ${d.done > 0 && html`<span class="pd-done" style=${`width:${(Math.min(d.done, maxMin) / maxMin) * 100}%`}></span>`}
         </span>
         <span class="pd-min">${d.past ? `${d.done} min` : d.off ? '–' : `${d.done ? `${d.done} / ` : ''}${planned} min`}</span>
-        ${!d.past && html`<button class="link small pd-toggle" disabled=${busy} onClick=${() => onToggleOff(d.key)}>${d.off ? 'Plugga' : 'Ledig'}</button>`}
+        ${!d.past && html`<button class="link small pd-toggle" disabled=${busy} onClick=${() => onToggleOff(d)}>${d.off ? 'Plugga' : 'Ledig'}</button>`}
       </li>`;
     })}</ol>
     <p class="small muted">Bekanta: korta pass och några nya mål i taget. Bygga: huvuddelen av arbetet. Befästa: svaga mål och repetition. Lugnt: kort repetition dagen före provet.</p>
@@ -1249,7 +1258,7 @@ function ChildHome({ env, go, profileId }) {
       const withProg = await Promise.all(tests.map(async t => {
         const [goals, mastery, banks, attempts] = await Promise.all([env.repo.listGoals(t.id), env.repo.listMastery(t.id), env.repo.listBanks(t.id), env.repo.listAttempts(t.id).catch(() => [])]);
         const active = goals.filter(childGoal);
-        const plan = buildPlan({ test: t, goals: active, mastery, banks, attempts, schedule: profile?.schedule || DEFAULT_SCHEDULE, offDates: t.offDates || [] });
+        const plan = buildPlan({ test: t, goals: active, mastery, banks, attempts, schedule: scheduleFor(profile), offDates: t.offDates || [], studyDates: t.studyDates || [] });
         const mastered = active.filter(g => mastery[g.id]?.passedMax && mastery[g.id].level >= practiceMax(g, banks[g.id])).length;
         return { ...t, progress: testProgress(active, mastery, banks), done: allMastered(active, mastery, banks), today: plan?.today || null, mastered, goalCount: active.length, teachable: active.some(g => g.type !== 'glosa') };
       }));
@@ -1333,6 +1342,8 @@ function Practice({ env, go, testId, profileId }) {
   const [saveErr, setSaveErr] = useState('');
   const [sheet, setSheet] = useState(null); // 'source' | 'explain'
   const [helped, setHelped] = useState(false); // tittade i materialet innan svaret
+  const tipKey = 'pk.tip.' + profileId;
+  const [tip, setTip] = useState(() => !lsGet(tipKey)); // "Så övar du bäst", tills barnet tryckt Okej
   const [introduced, setIntroduced] = useState({}); // mål vars begreppskort visats i det här passet
   const chatId = useRef(null);
   const kRef = useRef(null);            // Plumpen
@@ -1344,10 +1355,11 @@ function Practice({ env, go, testId, profileId }) {
     const now = Date.now();
     const plan = planFor(s);
     const { allowed } = allowedGoals({ goals: s.goals, mastery: s.mastery, attempts: s.attempts, plan, now });
-    return pickNext({ goals: allowed, masteryById: s.mastery, banks: s.banks, recent, now })
-      || pickNext({ goals: s.goals, masteryById: s.mastery, banks: s.banks, recent, now });
+    const targets = plan?.targets || {};
+    return pickNext({ goals: allowed, masteryById: s.mastery, banks: s.banks, recent, now, targets })
+      || pickNext({ goals: s.goals, masteryById: s.mastery, banks: s.banks, recent, now, targets });
   };
-  const planFor = s => buildPlan({ test: s.test, goals: s.goals, mastery: s.mastery, banks: s.banks, attempts: s.attempts, schedule: s.profile?.schedule || DEFAULT_SCHEDULE, offDates: s.test.offDates || [] });
+  const planFor = s => buildPlan({ test: s.test, goals: s.goals, mastery: s.mastery, banks: s.banks, attempts: s.attempts, schedule: scheduleFor(s.profile), offDates: s.test.offDates || [], studyDates: s.test.studyDates || [] });
 
   useEffect(() => {
     (async () => {
@@ -1395,22 +1407,26 @@ function Practice({ env, go, testId, profileId }) {
   const firstDay = state.attempts.reduce((k, a) => { const d = dayKey(a.ts); return !k || d < k ? d : k; }, null);
 
   // Sparar ett rättat svar och uppdaterar nivån. grading finns bara för fritext.
-  async function finalize(given, g, grading) {
+  //   dontKnow: barnet tryckte "Jag vet inte" och får se svaret direkt
+  async function finalize(given, g, grading, { dontKnow = false } = {}) {
     const { item, goal } = current;
     const before = current.mastery || state.mastery[goal.id] || newMastery(goal.id);
     const max = practiceMax(goal, state.banks[goal.id]);
     const now = Date.now();
     // Har barnet tittat i materialet före svaret räknas det som övning: nivån står still.
-    const { mastery, event } = helped
-      ? { mastery: { ...before, seen: { ...(before.seen || {}), [item.id]: now }, lastPracticed: now }, event: null }
+    // "Jag vet inte" likaså, och frågans mål kommer tillbaka om några minuter.
+    const assisted = helped || dontKnow;
+    const { mastery, event } = assisted
+      ? { mastery: { ...before, seen: { ...(before.seen || {}), [item.id]: now }, lastPracticed: now, ...(dontKnow ? { due: now + RETRY_MS } : {}) }, event: null }
       : applyResult(before, goal, { score: g.score, itemId: item.id, now, testDate: state.test.testDate, max });
     const attempt = {
       id: uid('a'), profileId, goalId: goal.id, itemId: item.id, level: item.level, kind: item.kind,
       answer: given, score: g.score, verdict: g.verdict, ts: now, disputed: false,
-      ...(helped ? { helped: true } : {}),
+      ...(assisted ? { helped: true } : {}),
+      ...(dontKnow ? { dontKnow: true } : {}),
       ...(grading ? { grading } : {}),
     };
-    setResult({ ...g, event, attemptId: attempt.id, given, grading, mastery, fromLevel: before.level, helped });
+    setResult({ ...g, event, attemptId: attempt.id, given, grading, mastery, fromLevel: before.level, helped: helped && !dontKnow, dontKnow });
     setState(s => ({ ...s, mastery: { ...s.mastery, [goal.id]: mastery }, attempts: [...s.attempts, attempt] }));
     setLog(l => [...l, { goalId: goal.id, itemId: item.id, score: g.score, event, goalText: goal.text, level: mastery.level }]);
     try {
@@ -1441,6 +1457,9 @@ function Practice({ env, go, testId, profileId }) {
     const verdict = score >= 1 ? 'right' : score > 0 ? 'almost' : 'wrong';
     finalize(result.given, { score, verdict }, { tier: 'själv', escalated: false, calls: 0 });
   }
+
+  const dontKnow = () => finalize(null, { score: 0, verdict: 'wrong' }, null, { dontKnow: true });
+  const closeTip = () => { lsSet(tipKey, '1'); setTip(false); };
 
   function resetQuestion() { setHelped(false); setSheet(null); chatId.current = null; }
 
@@ -1551,6 +1570,13 @@ function Practice({ env, go, testId, profileId }) {
       <${AnswerTrail} log=${log} total=${SESSION_LENGTH} current=${!result} />
       ${target && html`<span class="today-chip" title="Minuter i dag">${doneToday}/${target} min</span>`}
     </div>
+    ${tip && !introItem && !result && html`<section class="notice tip" role="note">
+      <p><strong>Så övar du bäst</strong></p>
+      <p>Försök svara själv först, även om du inte är säker. Det är när du försöker komma ihåg som det fastnar.</p>
+      <p>Fel gör inget. Du får öva på det igen, och efter svaret kan du läsa i materialet.</p>
+      <p>Har du ingen aning? Tryck på <strong>Jag vet inte</strong>, så får du se svaret.</p>
+      <div class="actions"><button class="btn primary small" onClick=${closeTip}>Okej</button></div>
+    </section>`}
     ${introItem
       ? html`<article class="qcard enter" key=${'intro-' + goal.id}>
           <${IntroCard} goal=${goal} item=${introItem} onDone=${() => setIntroduced(x => ({ ...x, [goal.id]: true }))} />
@@ -1561,9 +1587,10 @@ function Practice({ env, go, testId, profileId }) {
         ${isFree(item) && html`<span class="q-free">Svara med egna ord</span>`}
         ${helped && !result && html`<span class="q-helped">${item.kind === 'math' ? 'Med ledtråd' : 'Med hjälp av materialet'}</span>`}</p>
       <${Question} item=${item} disabled=${!!result} onAnswer=${answer} result=${result} hideGiven=${needsCoverWrite(item, goal, result)} onHelp=${() => setHelped(true)} />
-      ${!result && item.src && html`<div class="q-tools">
-        <button class="tool" onClick=${() => { setHelped(true); setSheet('source'); }}>
-          <${IconBook} /> Läs i materialet</button>
+      ${!result && html`<div class="q-tools">
+        <button class="tool" onClick=${dontKnow}>Jag vet inte</button>
+        ${item.src && html`<button class="tool" onClick=${() => { setHelped(true); setSheet('source'); }}>
+          <${IconBook} /> Läs i materialet</button>`}
         ${isFree(item) && html`<span class="small muted mic-tip"><${IconMic} /> Du kan prata in svaret med mikrofonen på tangentbordet.</span>`}
       </div>`}
     </article>`}
@@ -1683,7 +1710,7 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
   const cw = goal && needsCoverWrite(item, goal, result);
   const [skipped, setSkipped] = useState(false);
   const free = isFree(item);
-  const title = { right: 'Rätt!', almost: free ? 'Delvis rätt' : 'Nästan rätt', wrong: 'Inte riktigt' }[result.verdict];
+  const title = result.dontKnow ? 'Här är svaret' : { right: 'Rätt!', almost: free ? 'Delvis rätt' : 'Nästan rätt', wrong: 'Inte riktigt' }[result.verdict];
   // Det barnet ska läsa (och kan få uppläst): rubriken, kommentaren, rätt svar och förklaringen.
   const readText = [title, result.note, free && result.feedback,
     result.verdict !== 'right' && (free ? (!item.moves && `Exempel på bra svar: ${item.answer}`) : `Rätt svar: ${correctAnswerText(item)}`),
@@ -1707,13 +1734,14 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
     ${free
       ? result.verdict !== 'right' && (item.moves
         // Resonemang: kompisens följdfråga först, exemplet bara om barnet vill se det.
-        ? html`<details class="answer-line"><summary>Visa ett exempel på svar</summary><strong>${item.answer}</strong></details>`
+        ? html`<details class="answer-line" open=${!!result.dontKnow}><summary>Visa ett exempel på svar</summary><strong>${item.answer}</strong></details>`
         : html`<p class="answer-line">Exempel på bra svar: <strong>${item.answer}</strong></p>`)
       : result.verdict !== 'right' && html`<p class="answer-line">Rätt svar: <strong>${correctAnswerText(item)}</strong></p>`}
     ${cw && html`<${CoverWrite} word=${correctAnswerText(item)} chars=${item.chars} onDone=${onCopyDone} />`}
     ${item.explain && html`<p>${item.explain}</p>`}
     <p class="small muted">${/^kunna\s/i.test(goalText) ? `Du övar på att ${goalText.replace(/^kunna\s+/i, '')}` : `Mål: ${goalText}`}${/[.!?]$/.test(goalText) ? '' : '.'}</p>
     ${result.helped && html`<p class="small muted">Du tittade i materialet först, så det här räknas som övning och flyttar inte nivån.</p>`}
+    ${result.dontKnow && html`<p class="small muted">Läs svaret, och gärna var det står i materialet. Du får öva på det här igen om en stund, så får du försöka själv.</p>`}
     <div class="fb-tools">
       ${onExplain && html`<button class="tool" onClick=${onExplain}><${IconChat} /> Förklara mer</button>`}
       ${item.kind !== 'math' && html`<button class="tool" onClick=${onSource}><${IconBook} /> ${source ? html`<span>Läs i materialet<small>${source.replace(/, sida /, ', s. ')}</small></span>` : 'Läs underlaget'}</button>`}
@@ -1725,7 +1753,7 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
     ${jumpTo && html`<div class="jump"><span class="small">För lätt?</span>
       <button class="btn ghost small" onClick=${onJump}>Hoppa till nivå ${jumpTo}</button></div>`}
     <div class="actions">
-      ${result.verdict !== 'right' && (result.rechecking
+      ${result.verdict !== 'right' && !result.dontKnow && (result.rechecking
         ? html`<span class="small muted"><span class="spinner inline" aria-hidden="true"></span> Kontrollerar en gång till…</span>`
         : result.disputed
           ? result.recheck !== 'up' && html`<span class="small muted">${result.recheck === 'same' ? 'Rättningen stod sig. ' : ''}Förälder får titta på det.</span>`
