@@ -112,6 +112,9 @@ func TestProgressSummaryEdges(t *testing.T) {
 	set("tests/t1/attempts/a3", `{"goalId":"g1","score":"NaN","verdict":"wrong"}`) // utan tid, NaN-poäng
 	set("tests/t1/exams/x1", `{"ts":"inte ett tal","points":"Inf","max":3,"items":"fel typ"}`)
 	set("tests/t1/goals/g2", `{"text":["fel typ"]}`) // går inte att avkoda: räknas i skipped
+	// Jag vet inte i den form web/app.js (finalize) sparar det, och ett äldre svar med bara dontKnow.
+	set("tests/t1/attempts/a4", fmt.Sprintf(`{"id":"a4","profileId":"p1","goalId":"g1","itemId":"i1","level":2,"kind":"mcq","answer":null,"score":0,"verdict":"wrong","ts":%d,"disputed":false,"helped":true,"dontKnow":true}`, at("2026-10-25T08:00:00Z")))
+	set("tests/t1/attempts/a5", fmt.Sprintf(`{"goalId":"g1","score":0,"verdict":"wrong","dontKnow":true,"ts":%d}`, at("2026-10-25T08:01:00Z")))
 	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	sum, err := buildSummary(ctx, st, now)
 	if err != nil {
@@ -138,7 +141,31 @@ func TestProgressSummaryEdges(t *testing.T) {
 		t.Errorf("domar: %+v", p.Days)
 	}
 	g := p.Tests[0].Goals[0]
-	if p.Tests[0].Grade != 4 || g.Weight != 2 || g.Level != 2 || g.Answers != 3 || g.Score != 0.5 || p.Tests[0].FirstPractice != "2026-10-24" {
+	if p.Tests[0].Grade != 4 || g.Weight != 2 || g.Level != 2 || g.Answers != 5 || g.Score != 0.3 || g.Assisted != 2 || g.RecentAnswers != 3 || g.RecentScore != 0.5 || p.Tests[0].FirstPractice != "2026-10-24" {
 		t.Errorf("mål: %+v prov %+v", g, p.Tests[0])
+	}
+}
+
+// Trenden tar de tio senaste egna svaren, i tidsordning.
+func TestProgressSummaryRecent(t *testing.T) {
+	st, ctx := testStore(t), context.Background()
+	_ = st.Set(ctx, "profiles/p1", []byte(`{"name":"A"}`))
+	_ = st.Set(ctx, "tests/t1", []byte(`{"profileId":"p1","subject":"SO"}`))
+	_ = st.Set(ctx, "tests/t1/goals/g1", []byte(`{"text":"Mål","type":"fakta"}`))
+	base := time.Date(2026, 11, 10, 12, 0, 0, 0, stockholm).UnixMilli()
+	for i := 0; i < 15; i++ { // fem fel först, sedan tio rätt
+		score := 0
+		if i >= 5 {
+			score = 1
+		}
+		_ = st.Set(ctx, fmt.Sprintf("tests/t1/attempts/a%02d", 14-i), []byte(fmt.Sprintf(`{"goalId":"g1","score":%d,"ts":%d}`, score, base+int64(i)*60000)))
+	}
+	sum, err := buildSummary(ctx, st, time.Date(2026, 11, 11, 12, 0, 0, 0, stockholm))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := sum.Profiles[0].Tests[0].Goals[0]
+	if g.Answers != 15 || g.RecentAnswers != 10 || g.RecentScore != 1 || g.Score != 0.67 {
+		t.Errorf("trend: %+v", g)
 	}
 }

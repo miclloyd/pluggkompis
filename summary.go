@@ -25,6 +25,7 @@ const (
 	summarySchema   = "pluggkompis-progress/1"
 	summaryDays     = 28
 	summaryInterval = 10 * time.Minute
+	summaryRecent   = 10 // svar per mål i trenden
 )
 
 // num: ett tal i ett dokument. Webben sparar ibland tal som strängar (formulärfält) eller
@@ -64,14 +65,19 @@ type summaryDay struct {
 }
 
 type summaryGoal struct {
-	Text          string  `json:"text"`
-	Type          string  `json:"type,omitempty"`
-	Weight        int     `json:"weight,omitempty"`
-	Level         int     `json:"level"` // 0 = inte övat än
-	MaxLevel      int     `json:"maxLevel"`
-	PassedMax     bool    `json:"passedMax"`
-	Answers       int     `json:"answers"`
-	Score         float64 `json:"score"` // medel av poängen på alla svar
+	Text      string  `json:"text"`
+	Type      string  `json:"type,omitempty"`
+	Weight    int     `json:"weight,omitempty"`
+	Level     int     `json:"level"` // 0 = inte övat än
+	MaxLevel  int     `json:"maxLevel"`
+	PassedMax bool    `json:"passedMax"`
+	Answers   int     `json:"answers"`
+	Score     float64 `json:"score"` // medel av poängen på alla svar
+	// Trenden: de senaste svaren (högst 10) som barnet gav själv, utan att först ha tittat i
+	// materialet eller tryckt Jag vet inte. Jämför med score för att se om målet går framåt.
+	RecentAnswers int     `json:"recentAnswers"`
+	RecentScore   float64 `json:"recentScore"`        // 0 när recentAnswers är 0
+	Assisted      int     `json:"assisted,omitempty"` // svar med hjälp (materialet före svaret, Jag vet inte)
 	LastPracticed string  `json:"lastPracticed,omitempty"`
 }
 
@@ -127,6 +133,8 @@ type rawAttempt struct {
 	Score     num    `json:"score"`
 	Verdict   string `json:"verdict"`
 	TS        num    `json:"ts"`
+	Helped    bool   `json:"helped"`   // tittade i materialet först (web/app.js finalize sätter det även vid Jag vet inte)
+	DontKnow  bool   `json:"dontKnow"` // Jag vet inte
 }
 
 func listAs[T any](ctx context.Context, st *Store, coll string, skipped *int) ([]T, error) {
@@ -273,8 +281,9 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 			mBy[m.GoalID] = m
 		}
 		type acc struct {
-			n     int
-			score float64
+			n, helped int
+			score     float64
+			own       []rawAttempt // egna svar, för trenden
 		}
 		perGoal := map[string]*acc{}
 		first := ""
@@ -290,6 +299,11 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 			}
 			g.n++
 			g.score += float64(a.Score)
+			if a.Helped || a.DontKnow {
+				g.helped++
+			} else {
+				g.own = append(g.own, a)
+			}
 			if a.TS <= 0 {
 				continue // utan tid: räknas per mål men inte per dag
 			}
@@ -344,7 +358,16 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 				}
 			}
 			if a := perGoal[g.ID]; a != nil {
-				sg.Answers, sg.Score = a.n, round2(a.score/float64(a.n))
+				sg.Answers, sg.Score, sg.Assisted = a.n, round2(a.score/float64(a.n)), a.helped
+				sort.Slice(a.own, func(i, j int) bool { return a.own[i].TS < a.own[j].TS })
+				last := a.own[max(0, len(a.own)-summaryRecent):]
+				if len(last) > 0 {
+					sum := 0.0
+					for _, x := range last {
+						sum += float64(x.Score)
+					}
+					sg.RecentAnswers, sg.RecentScore = len(last), round2(sum/float64(len(last)))
+				}
 			}
 			out.Goals = append(out.Goals, sg)
 		}
