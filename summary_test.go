@@ -64,7 +64,18 @@ func TestProgressSummary(t *testing.T) {
 	if len(sum.Profiles[0].Days) != 0 || sum.Profiles[0].Tests[0].Goals[0].Answers == 0 {
 		t.Errorf("gamla dagar: %+v", sum.Profiles[0])
 	}
-	for _, bad := range []string{`"answer"`, "hemlig text", "salt", "pinHash", `"chats"`, `"pages"`} {
+	// Det senaste provläget i detalj: fråga, rätt svar och barnets svar som text.
+	le := tst.LatestExam
+	if le == nil || len(le.Items) != 3 || le.Max != 3 {
+		t.Fatalf("senaste provläget: %+v", le)
+	}
+	for _, it := range le.Items {
+		if it.Question == "" || it.Correct == "" || it.Answer == "" || it.Goal == "" {
+			t.Errorf("provfråga utan text: %+v", it)
+		}
+	}
+	// Övningssvar, utkast, samtal och material följer inte med.
+	for _, bad := range []string{"hemlig text", "salt", "pinHash", `"chats"`, `"pages"`, `"messages"`} {
 		if strings.Contains(string(raw), bad) {
 			t.Errorf("sammanfattningen innehåller %s", bad)
 		}
@@ -167,5 +178,52 @@ func TestProgressSummaryRecent(t *testing.T) {
 	g := sum.Profiles[0].Tests[0].Goals[0]
 	if g.Answers != 15 || g.RecentAnswers != 10 || g.RecentScore != 1 || g.Score != 0.67 {
 		t.Errorf("trend: %+v", g)
+	}
+}
+
+// Bara det senaste provläget i detalj; övningssvar och äldre provlägen följer inte med.
+// Facit och svar som tal och sant/falskt blir text; samma fråge-id i två banker blandas inte ihop.
+func TestProgressSummaryLatestExam(t *testing.T) {
+	st, ctx := testStore(t), context.Background()
+	set := func(p, v string) {
+		t.Helper()
+		if err := st.Set(ctx, p, []byte(v)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set("profiles/p1", `{"name":"A"}`)
+	set("tests/t1", `{"profileId":"p1","subject":"Ma"}`)
+	set("tests/t1/goals/g1", `{"text":"Räkna","type":"matematik"}`)
+	set("tests/t1/goals/g2", `{"text":"Sant eller falskt","type":"fakta"}`)
+	set("tests/t1/banks/g1", `{"items":[{"id":"i1","level":1,"kind":"math","q":"3+4","answer":7}]}`)
+	set("tests/t1/banks/g2", `{"items":[{"id":"i1","level":1,"kind":"tf","q":"Jorden är rund","answer":true}]}`)
+	set("tests/t1/attempts/a1", `{"goalId":"g1","itemId":"i1","answer":"ÖVNINGSSVAR","score":0,"ts":1794000000000}`)
+	set("tests/t1/exams/x1", `{"ts":1794000000000,"points":0,"max":1,"items":[{"goalId":"g1","itemId":"i1","answer":"ÄLDRE PROV","score":0,"verdict":"wrong"}]}`)
+	set("tests/t1/exams/x0", `{"ts":1794100000000,"endTs":1794100300000,"points":1,"max":3,"items":[
+		{"goalId":"g1","itemId":"i1","kind":"math","answer":8,"score":0,"verdict":"wrong"},
+		{"goalId":"g2","itemId":"i1","kind":"tf","answer":true,"score":1,"verdict":"right"},
+		{"goalId":"g1","itemId":"borta","answer":"x","score":0,"verdict":"wrong"}]}`)
+	sum, err := buildSummary(ctx, st, time.Date(2026, 11, 20, 12, 0, 0, 0, stockholm))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(sum)
+	for _, bad := range []string{"ÖVNINGSSVAR", "ÄLDRE PROV"} {
+		if strings.Contains(string(b), bad) {
+			t.Errorf("%s följde med", bad)
+		}
+	}
+	le := sum.Profiles[0].Tests[0].LatestExam
+	if le == nil || le.Minutes != 5 || len(le.Items) != 3 {
+		t.Fatalf("senaste provläget: %+v", le)
+	}
+	if it := le.Items[0]; it.Question != "3+4" || it.Correct != "7" || it.Answer != "8" {
+		t.Errorf("tal: %+v", it)
+	}
+	if it := le.Items[1]; it.Question != "Jorden är rund" || it.Correct != "sant" || it.Answer != "sant" {
+		t.Errorf("sant/falskt eller fel bank: %+v", it)
+	}
+	if it := le.Items[2]; !strings.Contains(it.Question, "finns inte längre") {
+		t.Errorf("borttagen fråga: %+v", it)
 	}
 }

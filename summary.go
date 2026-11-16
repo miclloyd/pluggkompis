@@ -4,8 +4,8 @@
 // Med -progress-summary skriver tjänsten filen vid start och sedan var tionde minut
 // (atomiskt: tmp + rename, 0600). Med bara: profiler (namn, födelseår, schema),
 // övningstid och svar per dag de senaste 28 dagarna, prov med mål och nivåer,
-// provlägen och antal skoluppgifter. Utan: barnens svar, samtal, material, filer,
-// PIN och AI-användning.
+// provlägen och antal skoluppgifter. Utan: barnens övningssvar, samtal, material, filer,
+// PIN och AI-användning. Undantag: det senaste provläget per prov visas i detalj (latestExam).
 package main
 
 import (
@@ -87,16 +87,43 @@ type summaryExam struct {
 	Max    int     `json:"max"`
 }
 
+// Det senaste provläget per prov i detalj: frågan, rätt svar, bedömningsmallen, barnets svar och
+// rättningen, för alla barnprofiler. Förälderns beslut (2026-11-16), efter att granskningen lyft
+// integritetsgränsen: "Senaste provläget, alltid". Bara det senaste provläget; övningssvar,
+// äldre provlägen och samtal följer inte med.
+type summaryExamItem struct {
+	Goal     string   `json:"goal"`
+	Level    int      `json:"level"`
+	Kind     string   `json:"kind"`
+	Question string   `json:"question"`
+	Correct  string   `json:"correct"`
+	Must     []string `json:"must,omitempty"` // bedömningsmallen (fritext)
+	Met      []bool   `json:"met,omitempty"`  // vilka punkter rättningen ansåg uppfyllda
+	Answer   string   `json:"answer"`
+	Verdict  string   `json:"verdict"`
+	Score    float64  `json:"score"`
+	Feedback string   `json:"feedback,omitempty"`
+}
+
+type summaryExamDetail struct {
+	Date    string            `json:"date,omitempty"`
+	Minutes int               `json:"minutes"`
+	Points  float64           `json:"points"`
+	Max     int               `json:"max"`
+	Items   []summaryExamItem `json:"items"`
+}
+
 type summaryTest struct {
-	Subject       string        `json:"subject"`
-	TestDate      string        `json:"testDate,omitempty"`
-	Grade         int           `json:"grade,omitempty"`
-	Status        string        `json:"status,omitempty"`
-	Reviewed      *bool         `json:"reviewed,omitempty"`
-	OffDates      []string      `json:"offDates,omitempty"`
-	FirstPractice string        `json:"firstPractice,omitempty"`
-	Goals         []summaryGoal `json:"goals"`
-	Exams         []summaryExam `json:"exams,omitempty"`
+	Subject       string             `json:"subject"`
+	TestDate      string             `json:"testDate,omitempty"`
+	Grade         int                `json:"grade,omitempty"`
+	Status        string             `json:"status,omitempty"`
+	Reviewed      *bool              `json:"reviewed,omitempty"`
+	OffDates      []string           `json:"offDates,omitempty"`
+	FirstPractice string             `json:"firstPractice,omitempty"`
+	Goals         []summaryGoal      `json:"goals"`
+	Exams         []summaryExam      `json:"exams,omitempty"`
+	LatestExam    *summaryExamDetail `json:"latestExam,omitempty"`
 }
 
 // Schemat för dagsplanen (profile.schedule): träningsdagar (0 = måndag) och minuter
@@ -206,10 +233,8 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 		Removed bool   `json:"removed"`
 	}
 	type bank struct {
-		ID    string `json:"id"`
-		Items []struct {
-			Level num `json:"level"`
-		} `json:"items"`
+		ID    string            `json:"id"`
+		Items []json.RawMessage `json:"items"`
 	}
 	type mastery struct {
 		GoalID        string `json:"goalId"`
@@ -218,10 +243,12 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 		LastPracticed num    `json:"lastPracticed"`
 	}
 	type exam struct {
-		ProfileID string `json:"profileId"`
-		TS        num    `json:"ts"`
-		Points    num    `json:"points"`
-		Max       num    `json:"max"`
+		ProfileID string          `json:"profileId"`
+		TS        num             `json:"ts"`
+		EndTS     num             `json:"endTs"`
+		Points    num             `json:"points"`
+		Max       num             `json:"max"`
+		Items     json.RawMessage `json:"items"` // läses för sig: ett trasigt fält får inte fälla provläget
 	}
 	type task struct {
 		ProfileID string `json:"profileId"`
@@ -271,9 +298,20 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 			return nil, err
 		}
 		top := map[string]int{}
+		items := map[string]map[string]json.RawMessage{} // frågebankens frågor per id, för provlägets detaljer
 		for _, b := range banks {
-			for _, it := range b.Items {
-				top[b.ID] = max(top[b.ID], it.Level.int())
+			for _, raw := range b.Items {
+				var it map[string]json.RawMessage
+				if json.Unmarshal(raw, &it) != nil {
+					continue
+				}
+				var lv num
+				_ = json.Unmarshal(it["level"], &lv)
+				top[b.ID] = max(top[b.ID], lv.int())
+				var id string
+				if json.Unmarshal(it["id"], &id) == nil && id != "" {
+					items[b.ID+"|"+id] = it // banken heter som målet; samma fråge-id kan finnas i två banker
+				}
 			}
 		}
 		mBy := map[string]mastery{}
@@ -379,6 +417,38 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 			}
 			out.Exams = append(out.Exams, summaryExam{Date: date, Points: float64(x.Points), Max: x.Max.int()})
 		}
+		if n := len(exams); n > 0 {
+			x := exams[0] // det senaste: högst ts (inte listans ordning)
+			for _, e := range exams[1:] {
+				if e.TS >= x.TS {
+					x = e
+				}
+			}
+			goalText := map[string]string{}
+			for _, g := range goals {
+				goalText[g.ID] = g.Text
+			}
+			var raw []json.RawMessage
+			_ = json.Unmarshal(x.Items, &raw)
+			rows := make([]examRow, 0, len(raw))
+			for _, r := range raw {
+				var it struct {
+					GoalID   string          `json:"goalId"`
+					ItemID   string          `json:"itemId"`
+					Level    num             `json:"level"`
+					Kind     string          `json:"kind"`
+					Answer   json.RawMessage `json:"answer"`
+					Score    num             `json:"score"`
+					Verdict  string          `json:"verdict"`
+					Met      []bool          `json:"met"`
+					Feedback string          `json:"feedback"`
+				}
+				if json.Unmarshal(r, &it) == nil {
+					rows = append(rows, examRow{it.GoalID, it.ItemID, it.Level.int(), it.Kind, it.Answer, float64(it.Score), it.Verdict, it.Met, it.Feedback})
+				}
+			}
+			out.LatestExam = examDetail(x.TS, x.EndTS, float64(x.Points), x.Max.int(), goalText, items, rows)
+		}
 		testsBy[t.ProfileID] = append(testsBy[t.ProfileID], out)
 	}
 
@@ -453,4 +523,153 @@ func runSummary(st *Store, path string) {
 		}
 		time.Sleep(summaryInterval)
 	}
+}
+
+type examRow struct {
+	goalID, itemID string
+	level          int
+	kind           string
+	answer         json.RawMessage
+	score          float64
+	verdict        string
+	met            []bool
+	feedback       string
+}
+
+func examDetail(ts, end num, points float64, mx int, goalText map[string]string, items map[string]map[string]json.RawMessage, rows []examRow) *summaryExamDetail {
+	d := &summaryExamDetail{Points: points, Max: mx, Items: []summaryExamItem{}}
+	if ts > 0 {
+		d.Date = dayOf(ts)
+		if end > ts {
+			d.Minutes = int((float64(end-ts))/60000 + 0.5)
+		}
+	}
+	for _, r := range rows {
+		it := items[r.goalID+"|"+r.itemID] // nil om frågan har tagits bort ur banken
+		e := summaryExamItem{Goal: goalText[r.goalID], Level: r.level, Kind: r.kind, Verdict: r.verdict, Score: r.score, Met: r.met, Feedback: clip(r.feedback)}
+		e.Question = clip(rawString(it["q"]))
+		if it == nil {
+			e.Question = "(frågan finns inte längre i frågebanken)"
+		}
+		e.Correct = clip(correctText(it))
+		_ = json.Unmarshal(it["must"], &e.Must)
+		e.Answer = clip(givenText(it, r.answer))
+		d.Items = append(d.Items, e)
+	}
+	return d
+}
+
+func clip(s string) string {
+	if r := []rune(s); len(r) > 1000 {
+		return string(r[:1000]) + "…"
+	}
+	return s
+}
+
+func rawString(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return ""
+}
+
+// correctText: som correctAnswerText i web/engine.js, så långt frågan går att läsa.
+func correctText(it map[string]json.RawMessage) string {
+	var options []string
+	_ = json.Unmarshal(it["options"], &options)
+	var idx num
+	if len(options) > 0 && json.Unmarshal(it["answer"], &idx) == nil && idx.int() >= 0 && idx.int() < len(options) {
+		return options[idx.int()]
+	}
+	if s := rawString(it["answerText"]); s != "" {
+		return s
+	}
+	if s := scalarText(it["answer"]); s != "" {
+		return s
+	}
+	var pairs [][]string
+	if json.Unmarshal(it["pairs"], &pairs) == nil && len(pairs) > 0 {
+		out := make([]string, 0, len(pairs))
+		for _, p := range pairs {
+			out = append(out, strings.Join(p, " – "))
+		}
+		return strings.Join(out, "; ")
+	}
+	var steps []string
+	if json.Unmarshal(it["steps"], &steps) == nil && len(steps) > 0 {
+		for i := range steps {
+			steps[i] = strconv.Itoa(i+1) + ". " + steps[i]
+		}
+		return strings.Join(steps, " ")
+	}
+	var cats []string
+	var sorted [][]string
+	if json.Unmarshal(it["categories"], &cats) == nil && json.Unmarshal(it["items"], &sorted) == nil {
+		out := []string{}
+		for _, c := range cats {
+			in := []string{}
+			for _, x := range sorted {
+				if len(x) == 2 && x[1] == c {
+					in = append(in, x[0])
+				}
+			}
+			out = append(out, c+": "+strings.Join(in, ", "))
+		}
+		return strings.Join(out, "; ")
+	}
+	return ""
+}
+
+// givenText: barnets svar som text (flerval = alternativets text, par = "a – b").
+func givenText(it map[string]json.RawMessage, raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "(inget svar)"
+	}
+	var options []string
+	_ = json.Unmarshal(it["options"], &options)
+	var idx num
+	if len(options) > 0 && json.Unmarshal(raw, &idx) == nil && string(raw) != `""` && idx.int() >= 0 && idx.int() < len(options) {
+		return options[idx.int()]
+	}
+	if s := scalarText(raw); s != "" || string(raw) == `""` {
+		return s
+	}
+	var m map[string]string
+	if json.Unmarshal(raw, &m) == nil {
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		out := make([]string, 0, len(m))
+		for _, k := range keys {
+			out = append(out, k+" – "+m[k])
+		}
+		return strings.Join(out, "; ")
+	}
+	var l []string
+	if json.Unmarshal(raw, &l) == nil {
+		return strings.Join(l, "; ")
+	}
+	return string(raw)
+}
+
+// scalarText: en sträng, ett tal eller sant/falskt som text ("" för annat).
+func scalarText(raw json.RawMessage) string {
+	if s := rawString(raw); s != "" {
+		return s
+	}
+	var f float64
+	if json.Unmarshal(raw, &f) == nil {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	var b bool
+	if json.Unmarshal(raw, &b) == nil {
+		if b {
+			return "sant"
+		}
+		return "falskt"
+	}
+	return ""
 }
