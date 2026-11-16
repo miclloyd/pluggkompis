@@ -412,3 +412,54 @@ export function shuffle(arr, rand = Math.random) {
   }
   return a;
 }
+
+// ---- Mål som kört fast och lästips ----
+
+export const TREND_N = 10;       // de senaste egna svaren (samma som framstegssammanfattningen)
+export const STUCK_MIN = 12;     // så många egna svar innan ett mål kan räknas som fastkört
+export const STUCK_BELOW = 0.6;  // ... och under så mycket rätt på de senaste TREND_N
+export const WEAK_BELOW = 0.85;  // "Vad ska jag läsa på?" föreslår bara mål under så mycket rätt
+
+// Barnets egna svar på ett mål (inte efter materialet, inte Jag vet inte, inte provläge),
+// äldst först, och snittet på de senaste TREND_N.
+export function goalTrend(goalId, attempts) {
+  const own = attempts.filter(a => a.goalId === goalId && !a.helped && !a.dontKnow && !a.exam).sort((a, b) => a.ts - b.ts);
+  const last = own.slice(-TREND_N);
+  return { own: own.length, recent: last.length, recentScore: last.length ? last.reduce((s, a) => s + (Number(a.score) || 0), 0) / last.length : null, last };
+}
+
+// Fastkört: många svar men fortfarande ungefär varannan fel. Fler frågor hjälper då sällan;
+// det som saknas är förståelsen, så appen erbjuder ett lästips i stället.
+export function isStuck(trend) {
+  return trend.own >= STUCK_MIN && trend.recent >= TREND_N && trend.recentScore < STUCK_BELOW;
+}
+
+// De mål som behöver mest: fastkörda först, sedan lägst andel rätt på de senaste svaren,
+// sedan längst kvar till högsta nivån. Klara mål och mål utan egna svar räknas inte.
+export function weakestGoals({ goals, mastery, banks, attempts, n = 2 }) {
+  return goals
+    .map(g => {
+      const t = goalTrend(g.id, attempts);
+      const m = mastery[g.id];
+      const max = practiceMax(g, banks[g.id]);
+      const done = m?.passedMax && m.level >= max;
+      return { g, t, done, left: 1 - (m?.level || 1) / max };
+    })
+    .filter(x => !x.done && x.t.recent > 0 && x.t.recentScore < WEAK_BELOW)
+    .sort((a, b) => (isStuck(b.t) - isStuck(a.t)) || (a.t.recentScore - b.t.recentScore) || (b.left - a.left))
+    .slice(0, n)
+    .map(x => x.g);
+}
+
+// Lästips: återanvänd dagens tips eller stoppa vid taket, innan ett nytt AI-anrop görs.
+// Ett tips från i dag som täcker alla efterfrågade mål återanvänds (även ett tips för två mål
+// när barnet nu frågar om ett av dem). Annars: nytt tips om barnet inte nått taket för dagen.
+export function tipDecision({ chats, profileId, goalIds, now = Date.now(), perDay }) {
+  const today = dayKey(now);
+  const tips = chats.filter(c => c.kind === 'tip' && c.profileId === profileId && dayKey(c.ts) === today);
+  const hit = goalIds.length && tips.slice().sort((a, b) => b.ts - a.ts)
+    .find(c => goalIds.every(id => (c.tips || []).some(t => t.goalId === id)));
+  if (hit) return { cached: (hit.tips || []).filter(t => goalIds.includes(t.goalId)) };
+  if (tips.length >= perDay) return { limit: true };
+  return { ask: true };
+}

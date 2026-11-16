@@ -1,6 +1,6 @@
 // Promptar och svarsscheman som rena data. Samma filer används i artifacten och på servern.
 // Versionen sparas på allt som genereras, så att gamla frågor kan spåras till sin prompt.
-import { GOAL_TYPES, TYPE_MAX, hasSpellingLure, correctAnswerText } from './engine.js';
+import { GOAL_TYPES, TYPE_MAX, hasSpellingLure, correctAnswerText, goalTrend } from './engine.js';
 import { SKILLS } from './math.js';
 
 export const PROMPT_VERSION = 'p2.5';
@@ -688,4 +688,121 @@ export function validateItemReview(out, items) {
     if (!fynd.some(x => x.id === f.id)) fynd.push({ id: f.id, problem: f.problem, vad: f.vad.trim().slice(0, 400) });
   }
   return { ok: !errors.length, errors, fynd };
+}
+
+// ---- Lästips: var barnet ska läsa och vad det kan göra, för mål som är svåra ----
+//
+// Underlaget är målen, barnets senaste missar och sidorna där målens frågor kommer ifrån.
+// Sidhänvisningarna i svaret kontrolleras mot sidorna som skickades med (validateTip), så att
+// barnet aldrig skickas till en sida som inte finns.
+
+const TIP_PAGES = 4;          // sidor totalt i underlaget
+const TIP_PAGE_CHARS = 3500;  // tecken per sida som mest (tipPrompt kortar tills prompten ryms)
+const TIP_MISSES = 6;         // senaste missarna per mål
+
+function givenAsText(item, given) {
+  if (given == null) return '(inget svar)';
+  if (item.kind === 'mcq') return item.options?.[given] ?? String(given);
+  if (typeof given === 'object') return Object.entries(given).map(([a, b]) => `${a} – ${b}`).join('; ');
+  return String(given);
+}
+
+// Underlaget för ett lästips: målen med missar och de sidor som hör till dem. Varje mål får
+// minst sin viktigaste sida (där missarna kommer ifrån, annars där flest frågor kommer ifrån);
+// resten av platserna fylls med de sidor som väger mest totalt.
+export function tipMaterial({ goals, banks, attempts, materials }) {
+  const total = new Map(); // "m|p" → vikt (missar väger tyngre än frågor)
+  const out = goals.map(g => {
+    const bank = banks[g.id] || [];
+    const byId = new Map(bank.map(i => [i.id, i]));
+    const own = new Map();
+    const bump = (src, w) => {
+      if (src?.m == null || src?.p == null) return;
+      const k = `${src.m}|${src.p}`;
+      own.set(k, (own.get(k) || 0) + w);
+      total.set(k, (total.get(k) || 0) + w);
+    };
+    for (const i of bank) bump(i.src, 1);
+    const misses = goalTrend(g.id, attempts).last.filter(a => (Number(a.score) || 0) < 1).slice(-TIP_MISSES)
+      .map(a => byId.get(a.itemId) && { item: byId.get(a.itemId), given: a.answer }).filter(Boolean);
+    for (const x of misses) bump(x.item.src, 5);
+    return {
+      id: g.id, text: String(g.text).slice(0, 300),
+      ranked: [...own.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k),
+      misses: misses.map(({ item, given }) => ({ q: String(item.q).slice(0, 300), correct: String(correctAnswerText(item) ?? '').slice(0, 300), given: givenAsText(item, given).slice(0, 200) })),
+    };
+  });
+  const page = k => {
+    const [m, p] = k.split('|');
+    const mat = materials.find(x => String(x.ref) === m);
+    const pg = mat?.pages.find(x => String(x.p) === p);
+    return pg && { key: k, m: mat.ref, name: mat.name, p: pg.p, text: String(pg.text || '') };
+  };
+  const chosen = [];
+  const take = k => { if (chosen.length < TIP_PAGES && !chosen.some(c => c.key === k)) { const pg = page(k); if (pg) chosen.push(pg); return !!pg; } return chosen.some(c => c.key === k); };
+  for (const g of out) g.ranked.some(take); // först den viktigaste sidan som finns, per mål
+  for (const [k] of [...total.entries()].sort((a, b) => b[1] - a[1])) take(k);
+  return { goals: out.map(({ ranked, ...g }) => g), pages: chosen.map(({ key, ...p }) => p) };
+}
+
+// Barnets anrop får vara högst 40 kB (servern, maxChildPromptBytes). Sidtexterna kortas tills
+// prompten ryms med marginal, mätt i byte (åäö är två byte, JSON-kodningen lägger till lite).
+const TIP_MAX_BYTES = 34000;
+const bytes = s => new TextEncoder().encode(JSON.stringify(s)).length;
+
+export function tipPrompt({ test, material }) {
+  for (let chars = TIP_PAGE_CHARS; ; chars = Math.floor(chars * 0.75)) {
+    const p = buildTipPrompt(test, material, chars);
+    if (bytes(p) <= TIP_MAX_BYTES || chars < 200) return p;
+  }
+}
+
+function buildTipPrompt(test, material, chars) {
+  const goals = material.goals.map((g, i) => `Mål ${i + 1}: ${g.text}
+Barnets senaste fel:${g.misses.length ? '\n' + g.misses.map(x => `- Fråga: ${x.q}\n  Rätt svar: ${x.correct}\n  Barnet svarade: ${x.given}`).join('\n') : ' (inga sparade)'}`).join('\n\n');
+  const pages = material.pages.map(p => `[material "${p.m}", sida ${p.p}] (${p.name})
+"""
+${p.text.slice(0, chars)}
+"""`).join('\n\n');
+  return `Du är en tålmodig studiekompis till ett barn. ${audience(test)}
+Barnet har övat mycket på ${material.goals.length > 1 ? 'de här målen' : 'det här målet'} men har fortfarande svårt med ${material.goals.length > 1 ? 'dem' : 'det'}. Ge ett lästips: var i materialet barnet ska läsa, en kort förklaring och något konkret att göra.
+
+${goals}
+
+Barnets material (bara de här sidorna finns):
+${pages}
+
+Svara med JSON och inget annat:
+{"tips":[{"goal":1,"read":[{"m":"<materialets id>","p":<sida>,"what":"vad barnet ska titta efter på sidan"}],"mistake":"vad barnet verkar blanda ihop, eller null","explain":"förklaringen","try":"något att göra"}]}
+
+Regler:
+- Ett tips per mål, i samma ordning som målen ("goal" = målets nummer).
+- "read": en till två sidor ur listan ovan, med exakt det material-id och sidnummer som står där. Hitta aldrig på sidor. "what" pekar ut stycket, rutan eller bilden, högst 15 ord.
+- "mistake": titta på barnets fel. Ser du ett mönster (till exempel att två begrepp blandas ihop), beskriv det vänligt i en mening. Annars null.
+- "explain": högst fyra korta meningar med ord som passar årskurs ${test.grade}. Utgå från materialet och förklara varför, inte bara vad. Lägger du till något som inte står i materialet, säg det: "Det står inte i ditt material, men …". Hitta aldrig på fakta.
+- "try": en eller två meningar om något barnet kan göra själv på högst tio minuter, med materialet och papper och penna, till exempel rita, göra en egen karta, förklara högt för någon eller göra egna frågekort. Inget som kräver internet.
+- Skriv direkt till barnet ("du"), uppmuntrande men utan överdrifter. Vanlig text, inga rubriker eller listor i texterna.`;
+}
+
+export function validateTip(out, material) {
+  const errors = [];
+  const tips = Array.isArray(out?.tips) ? out.tips : null;
+  if (!tips) return { ok: false, errors: ['"tips" saknas eller är inte en lista'] };
+  const clean = [];
+  material.goals.forEach((g, i) => {
+    const t = tips.find(x => Number(x?.goal) === i + 1);
+    if (!t) { errors.push(`tips för mål ${i + 1} saknas`); return; }
+    const read = [];
+    for (const r of Array.isArray(t.read) ? t.read : []) {
+      const pg = material.pages.find(p => `${p.m}|${p.p}` === `${r?.m}|${r?.p}`); // bara sidor ur underlaget
+      if (pg && !read.some(x => x.m === pg.m && x.p === pg.p) && read.length < 2) read.push({ m: pg.m, p: pg.p, what: String(r.what || '').slice(0, 160) });
+    }
+    if (!read.length) errors.push(`mål ${i + 1}: "read" måste peka på en sida ur listan`);
+    const explain = String(t.explain || '').trim(), tryIt = String(t.try || '').trim();
+    if (!explain) errors.push(`mål ${i + 1}: "explain" saknas`);
+    if (!tryIt) errors.push(`mål ${i + 1}: "try" saknas`);
+    const mistake = t.mistake && String(t.mistake).trim() && String(t.mistake).trim() !== 'null' ? String(t.mistake).trim().slice(0, 300) : null;
+    clean.push({ goalId: g.id, read, mistake, explain: explain.slice(0, 900), try: tryIt.slice(0, 400) });
+  });
+  return errors.length ? { ok: false, errors, tips: clean } : { ok: true, tips: clean };
 }

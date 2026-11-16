@@ -19,6 +19,7 @@ import { applyTheme, ThemeButton } from './theme.js';
 import { KompisStudio } from './studio.js';
 import { ExamMode } from './exam.js';
 import { Teach } from './teach.js';
+import { TipSheet } from './tips.js';
 import { Sheet } from './sheet.js';
 import { TaskList, TaskView, ParentTasks, SUPPORT_LABEL } from './tasks.js';
 import { PrintSheet } from './print.js';
@@ -29,7 +30,7 @@ import { gradeFree, regradeOnDispute, TIERS } from './grading.js';
 import {
   GOAL_TYPES, TYPE_LABEL, practiceMax, childGoal, parsePages, newMastery, applyResult, gradeLocal, correctAnswerText,
   pickNext, testProgress, goalProgress, allMastered, shuffle, replayMastery, isFree,
-  canJump, jumpUp, dayKey, RETRY_MS,
+  canJump, jumpUp, dayKey, RETRY_MS, goalTrend, isStuck,
 } from './engine.js';
 
 const SESSION_LENGTH = 12;
@@ -743,7 +744,7 @@ function TestSetup({ env, go, testId }) {
   // (lördag, söndag) blir pluggdag via studyDates.
   const toggleOff = d => run('Sparar', () => repo.updateTest(testId, toggleDay(d, test.offDates || [], test.studyDates || [])));
 
-  const progressView = html`<${ParentProgress} goals=${activeGoals} banks=${banks} mastery=${mastery} attempts=${attempts} events=${events} chats=${chats} exams=${exams}
+  const progressView = html`<${ParentProgress} materials=${materials} goals=${activeGoals} banks=${banks} mastery=${mastery} attempts=${attempts} events=${events} chats=${chats} exams=${exams}
         onResolve=${(a, accept) => run('Sparar', async () => {
           if (!accept) { await repo.updateAttempt(testId, a.id, { resolved: 'rejected' }); return; }
           await repo.updateAttempt(testId, a.id, { resolved: 'accepted', score: 1, verdict: 'right', originalScore: a.score });
@@ -912,8 +913,9 @@ function givenText(item, given) {
   return String(given ?? '');
 }
 
-function ParentProgress({ goals, banks, mastery, attempts, events = [], chats: allChats = [], exams = [], onResolve }) {
-  const chats = allChats.filter(c => c.kind !== 'teach');
+function ParentProgress({ goals, banks, mastery, attempts, events = [], chats: allChats = [], exams = [], materials = [], onResolve }) {
+  const chats = allChats.filter(c => c.kind !== 'teach' && c.kind !== 'tip');
+  const tips = allChats.filter(c => c.kind === 'tip');
   const teaches = allChats.filter(c => c.kind === 'teach');
   const goalText = id => goals.find(g => g.id === id)?.text || 'Borttaget mål';
   const jumps = Object.values(mastery).flatMap(m => m.jumps || []);
@@ -1011,6 +1013,18 @@ function ParentProgress({ goals, banks, mastery, attempts, events = [], chats: a
         ${c.messages.filter(m => m.role === 'user').map(m => html`<p class="chat-ask">${m.text}</p>`)}
         ${c.missing?.length > 0 && html`<p class="small">Saknades: ${c.missing.join('; ')}</p>`}
         ${c.wrong && html`<p class="small">Missförstånd: ${c.wrong}</p>`}
+      </li>`)}</ul>
+    </details>`}
+
+    ${tips.length > 0 && html`<details class="chats">
+      <summary><h3>Lästips (${tips.length})</h3></summary>
+      <p class="small muted">Tips som barnet har fått om var i materialet hen kan läsa och vad hen kan göra. Senaste först.</p>
+      <ul class="list">${tips.slice().sort((a, b) => b.ts - a.ts).slice(0, 10).map(c => html`<li class="chat-log">
+        <p class="small muted">${relDay(c.ts)}</p>
+        ${(c.tips || []).map(t => html`<p><strong>${goalText(t.goalId)}</strong><br />
+          <span class="small">Läs: ${t.read.map(r => `${(materials.find(m => String(m.ref) === String(r.m)) || {}).name || 'materialet'} s. ${r.p}${r.what ? ` (${r.what})` : ''}`).join('; ')}</span>
+          ${t.mistake && html`<br /><span class="small">Blandar ihop: ${t.mistake}</span>`}
+          <br /><span class="small">${t.explain}</span><br /><span class="small"><em>Prova:</em> ${t.try}</span></p>`)}
       </li>`)}</ul>
     </details>`}
 
@@ -1250,6 +1264,7 @@ function BankPreview({ goals, banks, materials, onDelete }) {
 function ChildHome({ env, go, profileId }) {
   const [data, setData] = useState(null);
   const [menu, setMenu] = useState(null); // provet vars val visas
+  const [tipFor, setTipFor] = useState(null); // provet vars lästips visas
   useEffect(() => {
     (async () => {
       const profiles = await env.repo.listProfiles();
@@ -1328,8 +1343,11 @@ function ChildHome({ env, go, profileId }) {
           <span class="tm-title">Provläge</span><span class="tm-sub">Testa dig som på ett riktigt prov. Svaren rättas på slutet.</span></button>
         ${env.ai && menu.teachable && html`<button class="tm-opt" onClick=${() => go({ name: 'teach', testId: menu.id, profileId })}>
           <span class="tm-title">Lär ut det</span><span class="tm-sub">Förklara något för ${look.name} med egna ord.</span></button>`}
+        ${env.ai && html`<button class="tm-opt" onClick=${() => { setTipFor(menu.id); setMenu(null); }}>
+          <span class="tm-title">Vad ska jag läsa på?</span><span class="tm-sub">${look.name} tittar på det som är svårast och visar var i materialet du kan läsa.</span></button>`}
       </div>
     <//>`}
+    ${tipFor && html`<${TipSheet} env=${env} testId=${tipFor} profileId=${profileId} name=${look.name} onClose=${() => setTipFor(null)} />`}
   </div>`;
 }
 
@@ -1388,10 +1406,19 @@ function Practice({ env, go, testId, profileId }) {
     k.mood(result.verdict === 'almost' ? 'peppar' : 'vilar');
   }, [result?.attemptId, result?.pending, result?.rechecking, result?.recheck, !!result, current?.item?.id]);
 
-  // Efter ett fel eller delvis rätt erbjuder Plumpen själv en förklaring.
+  // Efter ett fel eller delvis rätt erbjuder Plumpen själv en förklaring. Har målet kört fast
+  // (många svar, ändå ungefär varannan fel) erbjuds ett lästips i stället, en gång per mål och pass.
+  const tipOffered = useRef(new Set());
+  const [tipGoal, setTipGoal] = useState(null); // målet som lästipset gäller (fångas när det erbjuds)
   useEffect(() => {
     if (!result || result.pending || result.needsSelf || result.verdict === 'right' || !env.ai || say?.pause) return;
     if (current && needsCoverWrite(current.item, current.goal, result)) return; // stavningsövningen först
+    const gid = current?.goal.id;
+    if (gid && !tipOffered.current.has(gid) && isStuck(goalTrend(gid, state.attempts.filter(a => !a.profileId || a.profileId === profileId)))) {
+      const t = setTimeout(() => { tipOffered.current.add(gid); setSay({ text: 'Det här verkar knepigt, fast du har övat mycket. Vill du att jag visar var du kan läsa och ger ett tips?',
+        actions: [{ label: 'Ja, visa', primary: true, onClick: () => { setSay(null); setTipGoal(gid); setSheet('tip'); } }, { label: 'Inte nu', onClick: () => setSay(null) }] }); }, 900);
+      return () => clearTimeout(t);
+    }
     const t = setTimeout(() => setSay({ text: result.verdict === 'wrong' ? 'Ska jag förklara hur det hänger ihop?' : 'Nästan! Vill du att jag förklarar resten?',
       actions: [{ label: 'Ja, förklara', primary: true, onClick: () => { setSay(null); setSheet('explain'); } }, { label: 'Nej tack', onClick: () => setSay(null) }] }), 900);
     return () => clearTimeout(t);
@@ -1606,6 +1633,7 @@ function Practice({ env, go, testId, profileId }) {
       jumpTo=${!result.helped && result.score >= 1 && result.mastery ? (canJump(goal, result.mastery, state.banks[goal.id], { now: Date.now(), firstDay }).to || null) : null} onJump=${jump} />`}
     ${saveErr && html`<p class="notice bad">${saveErr}</p>`}
     ${sheet === 'source' && html`<${SourceSheet} files=${env.files} libs=${env.config?.libs} item=${item} materials=${state.materials} before=${!result} onClose=${() => setSheet(null)} />`}
+    ${sheet === 'tip' && tipGoal && html`<${TipSheet} env=${env} testId=${testId} profileId=${profileId} goalIds=${[tipGoal]} name=${{ ...KOMPIS_DEFAULT, ...(state.profile?.kompis || {}) }.name} onClose=${() => setSheet(null)} />`}
     ${sheet === 'explain' && html`<${ExplainSheet} look=${{ ...KOMPIS_DEFAULT, ...(state.profile?.kompis || {}) }} ai=${env.ai} test=${state.test} item=${item} answerText=${answerText} verdict=${result?.verdict} material=${mat}
       onClose=${() => setSheet(null)}
       onSave=${messages => {
@@ -1615,7 +1643,8 @@ function Practice({ env, go, testId, profileId }) {
     ${!introItem && html`<${KompisDock} kRef=${kRef} look=${{ ...KOMPIS_DEFAULT, ...(state.profile?.kompis || {}) }} say=${say}
       onDismiss=${() => { if (say?.pause) { since.current = Date.now() - PAUSE_AFTER + 4 * 60000; } setSay(null); }}
       menu=${result && !result.pending && !result.needsSelf
-        ? [...(env.ai ? [{ label: 'Förklara mer', onClick: () => setSheet('explain') }] : []), { label: 'Läs i materialet', onClick: () => setSheet('source') }]
+        ? [...(env.ai ? [{ label: 'Förklara mer', onClick: () => setSheet('explain') }] : []), { label: 'Läs i materialet', onClick: () => setSheet('source') },
+          ...(env.ai ? [{ label: 'Vad ska jag läsa på?', onClick: () => { setTipGoal(goal.id); setSheet('tip'); } }] : [])]
         : result ? [] : [{ label: 'Läs i materialet', onClick: () => { setHelped(true); setSheet('source'); } }]} />`}
   </div>`;
 }

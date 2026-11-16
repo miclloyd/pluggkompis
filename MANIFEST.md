@@ -25,7 +25,7 @@ pluggkompis/
 │   ├── extract.js  figures.js
 │   ├── ui.js  sheet.js  questions.js  source.js  explain.js  coverwrite.js
 │   ├── kompis.js  buddy.js  studio.js  theme.js
-│   ├── exam.js  teach.js  print.js
+│   ├── exam.js  teach.js  tips.js  print.js
 │   └── adapters/
 │       ├── artifact.js  server.js  memory.js
 ├── dev/
@@ -70,6 +70,7 @@ pluggkompis/
 | `web/theme.js` | ui | Ljust/mörkt/som enheten |
 | `web/exam.js` | ui + engine | Provläge: urval (`pickExam`), rättning på slutet, resultat |
 | `web/teach.js` | ui | Lär ut det |
+| `web/tips.js` | ui | Lästips: var i materialet barnet ska läsa och vad det kan göra, för fastkörda mål (`TipSheet`) |
 | `web/print.js` | ui | Instuderingshäfte som PDF (jsPDF), svar som CSV, säkerhetskopia som JSON |
 | `dev/harness/build.sh` | test | Bygger `web/` med lokala bibliotek och `stub.js` till `dev/harness/site` |
 | `dev/harness/stub.js` | test | Låtsas-`window.claude` med påhittade profiler (Elsa, Vidar, Test), prov t1–t5, svar och en AI som ger fasta svar |
