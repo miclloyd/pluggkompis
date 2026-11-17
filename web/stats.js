@@ -65,7 +65,7 @@ export function summarize(allAttempts, { days = 14, now = Date.now() } = {}) {
     last: sorted.length ? sorted[sorted.length - 1].ts : null,
     byDay,
     byGoal,
-    disputed: sorted.filter(a => a.disputed && !a.resolved).reverse(),
+    disputed: sorted.filter(a => a.disputed && !a.resolved && !a.void).reverse(),
   };
 }
 

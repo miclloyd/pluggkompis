@@ -20,6 +20,7 @@ import { KompisStudio } from './studio.js';
 import { ExamMode } from './exam.js';
 import { Teach } from './teach.js';
 import { TipSheet } from './tips.js';
+import { FlagSheet } from './flag.js';
 import { Sheet } from './sheet.js';
 import { TaskList, TaskView, ParentTasks, SUPPORT_LABEL } from './tasks.js';
 import { PrintSheet } from './print.js';
@@ -30,7 +31,7 @@ import { gradeFree, regradeOnDispute, TIERS } from './grading.js';
 import {
   GOAL_TYPES, TYPE_LABEL, practiceMax, childGoal, parsePages, newMastery, applyResult, gradeLocal, correctAnswerText,
   pickNext, testProgress, goalProgress, allMastered, shuffle, replayMastery, isFree,
-  canJump, jumpUp, dayKey, RETRY_MS, goalTrend, isStuck,
+  canJump, jumpUp, dayKey, RETRY_MS, goalTrend, isStuck, blockedItems, withoutItems,
 } from './engine.js';
 
 const SESSION_LENGTH = 12;
@@ -571,6 +572,7 @@ function TestSetup({ env, go, testId }) {
   const [events, setEvents] = useState([]);
   const [chats, setChats] = useState([]);
   const [exams, setExams] = useState([]);
+  const [flags, setFlags] = useState([]);
   const [profile, setProfile] = useState(null);
   const [pending, setPending] = useState([]); // filer som valts men inte lästs in: { file, role }
   const [busy, setBusy] = useState('');
@@ -582,8 +584,8 @@ function TestSetup({ env, go, testId }) {
   const [printing, setPrinting] = useState(false);
 
   const reload = useCallback(async () => {
-    const [t, m, g, b, ma, at, ev, profiles, ch, ex] = await Promise.all([repo.getTest(testId), repo.listMaterials(testId), repo.listGoals(testId), repo.listBanks(testId), repo.listMastery(testId), repo.listAttempts(testId).catch(() => []), repo.listEvents(testId).catch(() => []), repo.listProfiles(), repo.listChats(testId).catch(() => []), repo.listExams(testId).catch(() => [])]);
-    setTest(t); setMaterials(m); setGoals(g); setBanks(b); setMastery(ma); setAttempts(at); setEvents(ev); setChats(ch); setExams(ex);
+    const [t, m, g, b, ma, at, ev, profiles, ch, ex, fl] = await Promise.all([repo.getTest(testId), repo.listMaterials(testId), repo.listGoals(testId), repo.listBanks(testId), repo.listMastery(testId), repo.listAttempts(testId).catch(() => []), repo.listEvents(testId).catch(() => []), repo.listProfiles(), repo.listChats(testId).catch(() => []), repo.listExams(testId).catch(() => []), repo.listFlags(testId).catch(() => [])]);
+    setTest(t); setMaterials(m); setGoals(g); setBanks(b); setMastery(ma); setAttempts(at); setEvents(ev); setChats(ch); setExams(ex); setFlags(fl);
     setProfile(profiles.find(p => p.id === t?.profileId) || null);
   }, [testId]);
   useEffect(() => { reload(); }, [reload]);
@@ -745,16 +747,38 @@ function TestSetup({ env, go, testId }) {
   const toggleOff = d => run('Sparar', () => repo.updateTest(testId, toggleDay(d, test.offDates || [], test.studyDates || [])));
 
   const progressView = html`<${ParentProgress} materials=${materials} goals=${activeGoals} banks=${banks} mastery=${mastery} attempts=${attempts} events=${events} chats=${chats} exams=${exams}
-        onResolve=${(a, accept) => run('Sparar', async () => {
-          if (!accept) { await repo.updateAttempt(testId, a.id, { resolved: 'rejected' }); return; }
-          await repo.updateAttempt(testId, a.id, { resolved: 'accepted', score: 1, verdict: 'right', originalScore: a.score });
+        flags=${flags}
+        onResolve=${(a, score) => run('Sparar', async () => {
+          // score: 1 = rätt, 0.5 = delvis rätt, null = rättningen stämmer. Flaggor på svaret stängs.
+          for (const f of flags.filter(f => f.attemptId === a.id && f.kind === 'grading' && f.status === 'open')) await repo.updateFlag(testId, f.id, { status: 'resolved', handledAt: Date.now() });
+          if (score == null) { await repo.updateAttempt(testId, a.id, { resolved: 'rejected' }); return; }
+          await repo.updateAttempt(testId, a.id, { resolved: score >= 1 ? 'accepted' : 'partial', score, verdict: score >= 1 ? 'right' : 'almost', originalScore: a.score });
           const goal = goals.find(g => g.id === a.goalId);
           if (goal) {
-            const all = attempts.map(x => (x.id === a.id ? { ...x, score: 1 } : x));
+            const all = attempts.map(x => (x.id === a.id ? { ...x, score } : x));
             await repo.saveMastery(testId, replayMastery(goal, all, test.testDate, banks[goal.id], events));
           }
+        })}
+        onFlag=${(f, status) => run('Sparar', async () => {
+          await repo.updateFlag(testId, f.id, { status, handledAt: Date.now() });
+          if (status !== 'faulty') return;
+          // Alla andra öppna flaggor på samma fråga stängs också: frågan finns inte längre.
+          for (const o of flags.filter(o => o.id !== f.id && o.itemId === f.itemId && o.goalId === f.goalId && o.status === 'open')) {
+            await repo.updateFlag(testId, o.id, { status: o.kind === 'question' ? 'faulty' : 'resolved', handledAt: Date.now() });
+          }
+          // Frågan är fel: bort ur frågebanken, och svaren på den räknas inte längre i nivån.
+          const goal = goals.find(g => g.id === f.goalId);
+          if (banks[f.goalId]?.some(i => i.id === f.itemId)) await repo.saveBank(testId, f.goalId, banks[f.goalId].filter(i => i.id !== f.itemId));
+          const hit = attempts.filter(a => a.itemId === f.itemId && a.goalId === f.goalId);
+          for (const a of hit) await repo.updateAttempt(testId, a.id, { void: true });
+          if (goal && hit.length) {
+            const all = attempts.map(a => (hit.includes(a) ? { ...a, void: true } : a));
+            await repo.saveMastery(testId, replayMastery(goal, all, test.testDate, (banks[f.goalId] || []).filter(i => i.id !== f.itemId), events));
+          }
         })} />`;
-  const disputes = attempts.filter(a => a.disputed && !a.resolved).length;
+  const disputedIds = new Set(attempts.filter(a => a.disputed && !a.resolved && !a.void).map(a => a.id));
+  const openQuestionFlags = flags.filter(f => f.status === 'open' && (f.kind === 'question' || !disputedIds.has(f.attemptId))).length;
+  const disputes = disputedIds.size + openQuestionFlags;
   const TABS = [['oversikt', 'Översikt', disputes], ['plan', 'Plan', 0], ['mal', 'Mål och frågor', 0], ['material', 'Material', 0]];
 
   const header = html`
@@ -906,14 +930,18 @@ function PlanView({ plan, test, profile, onToggleOff, busy }) {
 }
 
 function givenText(item, given) {
-  if (!item) return String(given ?? '');
+  if (!item) {
+    if (Array.isArray(given)) return given.join('\n');
+    if (given && typeof given === 'object') return Object.entries(given).map(([a, b]) => `${a} – ${b}`).join('\n');
+    return String(given ?? '');
+  }
   if (item.kind === 'mcq') return item.options[given] ?? '';
   if (item.kind === 'match') return item.pairs.map(([l]) => `${l} – ${(given || {})[l] || '?'}`).join('\n');
   if (item.kind === 'order' && Array.isArray(given)) return given.map((s, i) => `${i + 1}. ${s}`).join('\n');
   return String(given ?? '');
 }
 
-function ParentProgress({ goals, banks, mastery, attempts, events = [], chats: allChats = [], exams = [], materials = [], onResolve }) {
+function ParentProgress({ goals, banks, mastery, attempts, events = [], chats: allChats = [], exams = [], materials = [], flags = [], onResolve, onFlag }) {
   const chats = allChats.filter(c => c.kind !== 'teach' && c.kind !== 'tip');
   const tips = allChats.filter(c => c.kind === 'tip');
   const teaches = allChats.filter(c => c.kind === 'teach');
@@ -924,6 +952,11 @@ function ParentProgress({ goals, banks, mastery, attempts, events = [], chats: a
     : '';
   const s = useMemo(() => summarize(attempts), [attempts]);
   const itemById = useMemo(() => Object.fromEntries(Object.values(banks).flat().map(i => [i.id, i])), [banks]);
+  const questionFlags = flags.filter(f => f.kind === 'question' && f.status === 'open').sort((a, b) => b.ts - a.ts);
+  // Flaggade rättningar som inte ligger under Att granska (inget sparat svar, eller AI:n höjde redan
+  // poängen vid omprövningen): barnets kommentar ska ändå synas.
+  const openDispute = new Set(attempts.filter(a => a.disputed && !a.resolved && !a.void).map(a => a.id));
+  const loneGradeFlags = flags.filter(f => f.kind === 'grading' && f.status === 'open' && !openDispute.has(f.attemptId)).sort((a, b) => b.ts - a.ts);
   const overall = testProgress(goals, mastery, banks);
   const graded = attempts.filter(a => a.grading && a.grading.tier !== 'lokal');
   const ai = {
@@ -976,9 +1009,42 @@ function ParentProgress({ goals, banks, mastery, attempts, events = [], chats: a
 
     ${weak.length > 0 && html`<div class="notice warn"><strong>Behöver mer övning:</strong> ${weak.map(r => r.g.text.replace(/^kunna\s+/i, '')).join(' · ')}</div>`}
 
+    ${questionFlags.length > 0 && html`<div class="disputes">
+      <h3>Flaggade frågor (${questionFlags.length})</h3>
+      <p class="small muted">Frågor som barnet tycker är konstiga eller fel. De används inte i övning eller provläge förrän du har bestämt dig.</p>
+      <ul class="list">${questionFlags.map(f => {
+        const it = itemById[f.itemId];
+        return html`<li class="dispute">
+          <p class="small muted">${relDay(f.ts)} · ${f.from || ''}</p>
+          <p><strong>${it ? it.q : f.q || 'Frågan finns inte längre'}</strong></p>
+          ${(it || f.correct) && html`<p class="small muted">${it && isFree(it) ? 'Exempel på bra svar' : 'Facit'}: <span class="pre">${it ? correctAnswerText(it) : f.correct}</span></p>`}
+          ${f.answer != null && html`<p class="small">Barnet svarade: <span class="pre">${givenText(it, f.answer)}</span></p>`}
+          ${f.comment && html`<p class="chat-ask">${f.comment}</p>`}
+          <div class="actions"><button class="btn ghost small" onClick=${() => onFlag(f, 'ok')}>Frågan är okej</button>
+            <button class="btn primary small" onClick=${() => onFlag(f, 'faulty')}>Frågan är fel, ta bort den</button></div>
+        </li>`;
+      })}</ul>
+    </div>`}
+
+    ${loneGradeFlags.length > 0 && html`<div class="disputes">
+      <h3>Flaggade rättningar (${loneGradeFlags.length})</h3>
+      <p class="small muted">Barnet tyckte att rättningen var fel. Här har AI:n redan rättat om svaret, eller så finns inget sparat svar att ändra.</p>
+      <ul class="list">${loneGradeFlags.map(f => {
+        const it = itemById[f.itemId];
+        const a = attempts.find(x => x.id === f.attemptId);
+        return html`<li class="dispute">
+          <p class="small muted">${relDay(f.ts)} · ${f.from || ''}${a?.resolved === 'ai-accepted' ? ' · AI:n höjde poängen vid omprövningen' : ''}</p>
+          <p><strong>${it ? it.q : f.q || 'Frågan finns inte längre'}</strong></p>
+          ${f.answer != null && html`<p class="small">Barnet svarade: <span class="pre">${givenText(it, f.answer)}</span></p>`}
+          ${f.comment && html`<p class="chat-ask">${f.comment}</p>`}
+          <div class="actions"><button class="btn primary small" onClick=${() => onFlag(f, 'resolved')}>Sett</button></div>
+        </li>`;
+      })}</ul>
+    </div>`}
+
     ${s.disputed.length > 0 && html`<div class="disputes">
       <h3>Att granska (${s.disputed.length})</h3>
-      <p class="small muted">Svar där barnet tycker att rättningen blev fel. "Räkna som rätt" ändrar både statistiken och nivån, som om svaret hade rättats som rätt från början.</p>
+      <p class="small muted">Svar där barnet tycker att rättningen blev fel. "Rätt" och "Delvis rätt" ändrar både statistiken och nivån, som om svaret hade rättats så från början.</p>
       <ul class="list">${s.disputed.map(a => {
         const it = itemById[a.itemId];
         return html`<li class="dispute">
@@ -987,8 +1053,10 @@ function ParentProgress({ goals, banks, mastery, attempts, events = [], chats: a
           ${it && html`<p class="small muted">${isFree(it) ? 'Exempel på bra svar' : 'Facit'}: <span class="pre">${correctAnswerText(it)}</span></p>`}
           ${it?.must && a.grading?.met && html`<ul class="checks small">${it.must.map((m, i) => html`<li class=${a.grading.met[i] ? 'ok' : 'no'}>${m}</li>`)}</ul>`}
           ${a.grading?.feedback && html`<p class="small muted">AI:s kommentar: ${a.grading.feedback}${a.grading.tier === TIERS.careful ? ' (noggrann modell)' : ''}</p>`}
-          <div class="actions"><button class="btn ghost small" onClick=${() => onResolve(a, false)}>Rättningen stämmer</button>
-            <button class="btn primary small" onClick=${() => onResolve(a, true)}>Räkna som rätt</button></div>
+          ${flags.filter(f => f.attemptId === a.id && f.comment).map(f => html`<p class="chat-ask">${f.comment}</p>`)}
+          <div class="actions"><button class="btn ghost small" onClick=${() => onResolve(a, null)}>Rättningen stämmer</button>
+            ${(a.score || 0) < 0.5 && html`<button class="btn ghost small" onClick=${() => onResolve(a, 0.5)}>Delvis rätt</button>`}
+            <button class="btn primary small" onClick=${() => onResolve(a, 1)}>Rätt</button></div>
         </li>`;
       })}</ul>
     </div>`}
@@ -1381,11 +1449,12 @@ function Practice({ env, go, testId, profileId }) {
 
   useEffect(() => {
     (async () => {
-      const [test, goals, banks, mastery, materials, profiles, attempts, events] = await Promise.all([
+      const [test, goals, banks, mastery, materials, profiles, attempts, events, flags] = await Promise.all([
         repo.getTest(testId), repo.listGoals(testId), repo.listBanks(testId), repo.listMastery(testId), repo.listMaterials(testId), repo.listProfiles(),
-        repo.listAttempts(testId).catch(() => []), repo.listEvents(testId).catch(() => []),
+        repo.listAttempts(testId).catch(() => []), repo.listEvents(testId).catch(() => []), repo.listFlags(testId).catch(() => []),
       ]);
-      const s = { test, goals: goals.filter(childGoal), banks: withChars(goals, withDictation(goals, banks)), mastery, materials, attempts, events, profile: profiles.find(p => p.id === profileId) };
+      // Frågor som barnet flaggat som konstiga kommer inte tillbaka förrän föräldern har tittat.
+      const s = { test, goals: goals.filter(childGoal), banks: withoutItems(withChars(goals, withDictation(goals, banks)), blockedItems(flags)), mastery, materials, attempts, events, profile: profiles.find(p => p.id === profileId) };
       setState(s);
       setCurrent(choose(s, []));
     })();
@@ -1469,10 +1538,11 @@ function Practice({ env, go, testId, profileId }) {
     if (!env.ai) return setResult({ needsSelf: true, given, error: 'AI-rättning finns inte här.' });
     setResult({ pending: true, given });
     try {
-      const g = await gradeFree({ ai: env.ai, test: state.test, item, answer: given });
+      const g = await gradeFree({ ai: env.ai, test: state.test, item, answer: given, attempts: state.attempts.filter(a => !a.profileId || a.profileId === profileId) });
       await finalize(given, g, {
         tier: g.tier, escalated: g.escalated, reason: g.reason || null, met: g.met,
         feedback: g.feedback, confidence: g.confidence, calls: g.calls, ...(g.firstScore != null ? { firstScore: g.firstScore } : {}),
+        ...(g.v ? { v: g.v } : {}), ...(g.qk ? { qk: g.qk } : {}), ...(g.reused ? { reused: g.reused } : {}),
       });
     } catch (e) {
       setResult({ needsSelf: true, given, error: errText(e) });
@@ -1483,6 +1553,18 @@ function Practice({ env, go, testId, profileId }) {
   function selfGrade(score) {
     const verdict = score >= 1 ? 'right' : score > 0 ? 'almost' : 'wrong';
     finalize(result.given, { score, verdict }, { tier: 'själv', escalated: false, calls: 0 });
+  }
+
+  // "Något är fel": flaggan sparas (servern skickar notis), en konstig fråga tas ur passet, och
+  // "rättningen är fel" går vidare till omprövningen som "Jag tycker jag hade rätt" gjorde förut.
+  async function sendFlag({ kind, comment }) {
+    const { item, goal } = current;
+    await repo.saveFlag(testId, { id: uid('f'), kind, profileId, itemId: item.id, goalId: goal.id, attemptId: result.attemptId || null,
+      q: item.q, correct: String(correctAnswerText(item) ?? ''), // frågan som den såg ut (vissa frågor skapas i stunden)
+      answer: result.given ?? null, comment, ts: Date.now(), status: 'open', from: 'övning' });
+    if (kind === 'question') setState(s => ({ ...s, banks: withoutItems(s.banks, new Set([item.id])) }));
+    setResult(r => ({ ...r, flagged: true }));
+    if (kind === 'grading' && result.attemptId) dispute();
   }
 
   const dontKnow = () => finalize(null, { score: 0, verdict: 'wrong' }, null, { dontKnow: true });
@@ -1536,7 +1618,7 @@ function Practice({ env, go, testId, profileId }) {
     try {
       const g = await regradeOnDispute({ ai: env.ai, test: state.test, item, answer: r0.given, previous: r0.grading });
       if (!g || g.score <= r0.score) return setResult(r => ({ ...r, rechecking: false, recheck: g ? 'same' : 'parent' }));
-      const grading = { tier: g.tier, escalated: true, reason: 'invändning', met: g.met, feedback: g.feedback, confidence: g.confidence, calls: (r0.grading.calls || 1) + 1 };
+      const grading = { tier: g.tier, escalated: true, reason: 'invändning', met: g.met, feedback: g.feedback, confidence: g.confidence, calls: (r0.grading.calls || 1) + 1, v: g.v, qk: g.qk };
       await repo.updateAttempt(testId, r0.attemptId, { score: g.score, verdict: g.verdict, grading, resolved: 'ai-accepted', originalScore: r0.score });
       const all = (await repo.listAttempts(testId)).map(a => (a.id === r0.attemptId ? { ...a, score: g.score } : a));
       const m = replayMastery(goal, all, state.test.testDate, state.banks[goal.id], state.events);
@@ -1628,11 +1710,12 @@ function Practice({ env, go, testId, profileId }) {
         if (r.ok) kRef.current?.react('ratt');
         setResult(x => ({ ...x, copied: r }));
         repo.updateAttempt(testId, result.attemptId, { coverWrite: r }).catch(() => {});
-      }} source=${mat ? `${mat.name}, sida ${item.src.p}` : null} onNext=${next} onDispute=${dispute}
+      }} source=${mat ? `${mat.name}, sida ${item.src.p}` : null} onNext=${next} onFlag=${() => setSheet('flag')}
       onSource=${() => setSheet('source')}
       jumpTo=${!result.helped && result.score >= 1 && result.mastery ? (canJump(goal, result.mastery, state.banks[goal.id], { now: Date.now(), firstDay }).to || null) : null} onJump=${jump} />`}
     ${saveErr && html`<p class="notice bad">${saveErr}</p>`}
     ${sheet === 'source' && html`<${SourceSheet} files=${env.files} libs=${env.config?.libs} item=${item} materials=${state.materials} before=${!result} onClose=${() => setSheet(null)} />`}
+    ${sheet === 'flag' && result && html`<${FlagSheet} canGrade=${result.verdict !== 'right' && !result.dontKnow && current?.item.kind !== 'math'} onSend=${sendFlag} onClose=${() => setSheet(null)} />`}
     ${sheet === 'tip' && tipGoal && html`<${TipSheet} env=${env} testId=${testId} profileId=${profileId} goalIds=${[tipGoal]} name=${{ ...KOMPIS_DEFAULT, ...(state.profile?.kompis || {}) }.name} onClose=${() => setSheet(null)} />`}
     ${sheet === 'explain' && html`<${ExplainSheet} look=${{ ...KOMPIS_DEFAULT, ...(state.profile?.kompis || {}) }} ai=${env.ai} test=${state.test} item=${item} answerText=${answerText} verdict=${result?.verdict} material=${mat}
       onClose=${() => setSheet(null)}
@@ -1734,7 +1817,7 @@ function TodayBar({ done, target }) {
   </div>`;
 }
 
-function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jumpTo, onJump, onSource, onExplain, onCopyDone }) {
+function Feedback({ result, item, goal, goalText, source, onNext, onFlag, jumpTo, onJump, onSource, onExplain, onCopyDone }) {
   const ref = useRef();
   const cw = goal && needsCoverWrite(item, goal, result);
   const [skipped, setSkipped] = useState(false);
@@ -1782,11 +1865,13 @@ function Feedback({ result, item, goal, goalText, source, onNext, onDispute, jum
     ${jumpTo && html`<div class="jump"><span class="small">För lätt?</span>
       <button class="btn ghost small" onClick=${onJump}>Hoppa till nivå ${jumpTo}</button></div>`}
     <div class="actions">
-      ${result.verdict !== 'right' && !result.dontKnow && (result.rechecking
+      ${result.rechecking
         ? html`<span class="small muted"><span class="spinner inline" aria-hidden="true"></span> Kontrollerar en gång till…</span>`
         : result.disputed
-          ? result.recheck !== 'up' && html`<span class="small muted">${result.recheck === 'same' ? 'Rättningen stod sig. ' : ''}Förälder får titta på det.</span>`
-          : item.kind !== 'math' && html`<button class="btn ghost small" onClick=${onDispute}>Jag tycker jag hade rätt</button>`)}
+          ? result.recheck !== 'up' && html`<span class="small muted">${result.recheck === 'same' ? 'Rättningen stod sig. ' : ''}En vuxen tittar på det.</span>`
+          : result.flagged
+            ? html`<span class="small muted">Tack! En vuxen tittar på det.</span>`
+            : html`<button class="btn ghost small" onClick=${onFlag}>Något är fel</button>`}
       ${blocked && html`<button class="link small" onClick=${() => setSkipped(true)}>Hoppa över övningen</button>`}
       <button ref=${ref} class=${'btn primary' + (ready ? '' : ' wait')} style=${`--wait: ${readMs}ms`} disabled=${!!result.rechecking || blocked || !ready} aria-describedby=${ready ? null : 'fb-wait'} onClick=${onNext}>Nästa</button>
       ${!ready && html`<span id="fb-wait" class="visually-hidden">Läs kommentaren först. Knappen blir klickbar om en liten stund.</span>`}

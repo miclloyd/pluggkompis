@@ -103,6 +103,7 @@ type server struct {
 	host     string        // tailnet-namnet (fqdn) eller LAN-namnet; tomt = dev, http på loopback
 	lan      bool          // LAN-lyssnaren (skoldatorer): inloggning med kaka i stället för WhoIs
 	heavy    chan struct{} // samtidiga tunga anrop (filer, AI)
+	notify   *notifier     // nil = inga notiser (flaggor syns ändå i föräldraläget)
 }
 
 func (s *server) setUsers(list []User) {
@@ -326,9 +327,20 @@ func (a *server) storeSet(w http.ResponseWriter, r *http.Request) {
 		accessError(w, err)
 		return
 	}
-	if err := a.st.Set(r.Context(), r.PathValue("path"), body); err != nil {
+	p := r.PathValue("path")
+	sg := segs(p)
+	isFlag := len(sg) == 4 && sg[0] == "tests" && sg[2] == "flags"
+	existed := false
+	if isFlag {
+		_, err := a.st.Get(r.Context(), p)
+		existed = err == nil
+	}
+	if err := a.st.Set(r.Context(), p, body); err != nil {
 		storeError(w, err)
 		return
+	}
+	if isFlag && !existed {
+		a.flagCreated(context.WithoutCancel(r.Context()), sg[1], body)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

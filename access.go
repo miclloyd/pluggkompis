@@ -30,7 +30,7 @@ var (
 
 // Samlingarna under ett prov som barnet skriver när det övar.
 var childCollections = map[string]bool{
-	"attempts": true, "mastery": true, "events": true, "chats": true, "exams": true,
+	"attempts": true, "mastery": true, "events": true, "chats": true, "exams": true, "flags": true,
 }
 
 // Fälten på en profil som barnet själv väljer (kompisstudion, tema).
@@ -193,6 +193,12 @@ func (s *server) canWrite(r *http.Request, p string) (mode string, err error) {
 		owner, err := s.testOwner(r.Context(), sg[1])
 		if err != nil {
 			return "", err
+		}
+		// Flaggor skapar barnet, men ändrar dem inte: förälderns beslut (okej, borttagen) står fast.
+		if sg[2] == "flags" {
+			if _, err := s.st.Get(r.Context(), p); !errors.Is(err, errNotFound) {
+				return "", deny // finns redan, eller går inte att avgöra
+			}
 		}
 		if allowed(owner) {
 			return writeFree, nil

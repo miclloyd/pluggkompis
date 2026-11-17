@@ -23,11 +23,11 @@ export async function createServerAdapters(config) {
   let scope = {};
   const ai = config.features?.ai ? {
     setScope(s) { scope = s || {}; },
-    async complete({ prompt, images, tier = 'default', json = false, signal, onText }) {
+    async complete({ prompt, images, tier = 'default', json = false, stable = false, signal, onText }) {
       // Med onText (Förklara mer) strömmas texten medan modellen skriver, som i artifacten.
       const stream = !!onText && !json && !(images || []).length;
       const form = new FormData();
-      form.append('request', JSON.stringify({ prompt, tier, json, stream, ...scope }));
+      form.append('request', JSON.stringify({ prompt, tier, json, stream, stable, ...scope }));
       for (const img of images || []) form.append('images', img);
       let r;
       try {

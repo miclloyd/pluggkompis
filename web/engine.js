@@ -158,9 +158,10 @@ export function applyResult(m, goal, { score, itemId, now, testDate, max: maxIn 
 // events: händelser som också påverkar nivån, i dag bara egna hopp ({ type:'jump', goalId, ts }).
 export function replayMastery(goal, attempts, testDate, bank, events = []) {
   let m = newMastery(goal.id);
-  // Svar där barnet tittade i materialet först, och svar i provläget, påverkar inte nivån.
+  // Svar där barnet tittade i materialet först, svar i provläget och svar på en fråga som
+  // föräldern tagit bort som felaktig (void) påverkar inte nivån.
   const own = [
-    ...attempts.filter(a => a.goalId === goal.id && !a.helped && !a.exam).map(a => ({ ...a, _t: 'answer' })),
+    ...attempts.filter(a => a.goalId === goal.id && !a.helped && !a.exam && !a.void).map(a => ({ ...a, _t: 'answer' })),
     ...events.filter(e => e.goalId === goal.id && e.type === 'jump').map(e => ({ ...e, _t: 'jump' })),
   ].sort((a, b) => a.ts - b.ts);
   // Nivåtaket är frågebanken som den ser ut nu; frågor för högre nivåer finns bara när de skapats.
@@ -423,7 +424,7 @@ export const WEAK_BELOW = 0.85;  // "Vad ska jag läsa på?" föreslår bara må
 // Barnets egna svar på ett mål (inte efter materialet, inte Jag vet inte, inte provläge),
 // äldst först, och snittet på de senaste TREND_N.
 export function goalTrend(goalId, attempts) {
-  const own = attempts.filter(a => a.goalId === goalId && !a.helped && !a.dontKnow && !a.exam).sort((a, b) => a.ts - b.ts);
+  const own = attempts.filter(a => a.goalId === goalId && !a.helped && !a.dontKnow && !a.exam && !a.void).sort((a, b) => a.ts - b.ts);
   const last = own.slice(-TREND_N);
   return { own: own.length, recent: last.length, recentScore: last.length ? last.reduce((s, a) => s + (Number(a.score) || 0), 0) / last.length : null, last };
 }
@@ -462,4 +463,16 @@ export function tipDecision({ chats, profileId, goalIds, now = Date.now(), perDa
   if (hit) return { cached: (hit.tips || []).filter(t => goalIds.includes(t.goalId)) };
   if (tips.length >= perDay) return { limit: true };
   return { ask: true };
+}
+
+// ---- Flaggor ----
+// Frågor som barnet flaggat som konstiga/fel och som föräldern inte släppt (status 'ok'):
+// de används inte i övning eller provläge. 'faulty' = föräldern har bekräftat att frågan är fel.
+export function blockedItems(flags = []) {
+  return new Set(flags.filter(f => f.kind === 'question' && f.status !== 'ok').map(f => f.itemId));
+}
+
+export function withoutItems(banks, blocked) {
+  if (!blocked.size) return banks;
+  return Object.fromEntries(Object.entries(banks).map(([gid, items]) => [gid, (items || []).filter(i => !blocked.has(i.id))]));
 }

@@ -482,6 +482,8 @@ ${item.must.map((m, i) => `${i + 1}. ${m}`).join('\n')}
 
 Så här bedömer du:
 - Godkänn andra formuleringar som betyder samma sak. Svaret behöver inte likna exemplet.
+${glosa ? '' : `- Gäller punkten VAD eller VILKA något är (den pekar ut saker, inte en förklaring eller ett varför) och svarar barnet med ämnets vedertagna namn på just det som punkten pekar ut (det namn ett läromedel i årskursen använder), är punkten uppfylld även om svaret inte nämner den egenskap som står i mallen. Frågar frågan efter en egenskap eller sort ("vilket slags", "vilken sort"), räcker namnet bara om det i ämnet betyder just den sortens sak, så att den som kan ämnet ser att svaret säger samma sak. Exempel: frågan gäller vilka slags linjer som möts i gränspunkten, mallen säger "parallella linjer", och i perspektivteckning är stödlinjerna just de linjerna — då räcker "stödlinjerna". Namnet måste peka ut exakt det punkten gäller och stämma i sak; en gissning eller ett närliggande men fel begrepp räcker inte, en punkt som kräver en förklaring eller ett varför uppfylls aldrig av bara ett namn, och ett svar som bara upprepar ord ur frågan uppfyller inte punkten.
+`}- Bedöm samma svar på samma sätt varje gång. Är du osäker på om punkten är uppfylld, sätt confidence "låg" i stället för att gissa.
 - ${glosa ? 'Ordet ska vara rättstavat och användas med rätt betydelse. Övrig grammatik spelar ingen roll.' : 'Stavfel och grammatik spelar ingen roll så länge innebörden går att förstå.'}
 - Var lika noggrann som en snäll men rättvis lärare i årskurs ${test.grade}. Kräv inte mer än mallen säger.
 - Ett svar som säger emot sig självt, eller räknar upp många gissningar, uppfyller inte punkten.

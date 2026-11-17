@@ -105,6 +105,18 @@ type summaryExamItem struct {
 	Feedback string   `json:"feedback,omitempty"`
 }
 
+// En öppen flagga: barnet tycker att rättningen eller frågan är fel (web/flag.js).
+type summaryFlag struct {
+	Date     string `json:"date,omitempty"`
+	Kind     string `json:"kind"` // grading | question
+	From     string `json:"from,omitempty"`
+	Goal     string `json:"goal,omitempty"`
+	Question string `json:"question"`
+	Correct  string `json:"correct,omitempty"`
+	Answer   string `json:"answer,omitempty"`
+	Comment  string `json:"comment,omitempty"`
+}
+
 type summaryExamDetail struct {
 	Date    string            `json:"date,omitempty"`
 	Minutes int               `json:"minutes"`
@@ -124,6 +136,7 @@ type summaryTest struct {
 	Goals         []summaryGoal      `json:"goals"`
 	Exams         []summaryExam      `json:"exams,omitempty"`
 	LatestExam    *summaryExamDetail `json:"latestExam,omitempty"`
+	Flags         []summaryFlag      `json:"flags,omitempty"` // öppna flaggor
 }
 
 // Schemat för dagsplanen (profile.schedule): träningsdagar (0 = måndag) och minuter
@@ -162,6 +175,7 @@ type rawAttempt struct {
 	TS        num    `json:"ts"`
 	Helped    bool   `json:"helped"`   // tittade i materialet först (web/app.js finalize sätter det även vid Jag vet inte)
 	DontKnow  bool   `json:"dontKnow"` // Jag vet inte
+	Void      bool   `json:"void"`     // svar på en fråga som föräldern tagit bort som felaktig
 }
 
 func listAs[T any](ctx context.Context, st *Store, coll string, skipped *int) ([]T, error) {
@@ -330,6 +344,9 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 			if pid == "" {
 				pid = t.ProfileID
 			}
+			if a.Void {
+				continue // borttagen fråga: räknas varken per mål eller per dag
+			}
 			g := perGoal[a.GoalID]
 			if g == nil {
 				g = &acc{}
@@ -448,6 +465,47 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 				}
 			}
 			out.LatestExam = examDetail(x.TS, x.EndTS, float64(x.Points), x.Max.int(), goalText, items, rows)
+		}
+		type flag struct {
+			Kind    string          `json:"kind"`
+			Status  string          `json:"status"`
+			From    string          `json:"from"`
+			GoalID  string          `json:"goalId"`
+			ItemID  string          `json:"itemId"`
+			Answer  json.RawMessage `json:"answer"`
+			Comment string          `json:"comment"`
+			Q       string          `json:"q"`       // frågan som den såg ut när den flaggades
+			Correct string          `json:"correct"` // facit då
+			TS      num             `json:"ts"`
+		}
+		flags, err := listAs[flag](ctx, st, coll+"/flags", &skipped)
+		if err != nil {
+			return nil, err
+		}
+		sort.Slice(flags, func(i, j int) bool { return flags[i].TS < flags[j].TS })
+		gt := map[string]string{}
+		for _, g := range goals {
+			gt[g.ID] = g.Text
+		}
+		for _, f := range flags {
+			if f.Status != "open" {
+				continue
+			}
+			it := items[f.GoalID+"|"+f.ItemID]
+			sf := summaryFlag{Kind: f.Kind, From: f.From, Goal: gt[f.GoalID], Question: clip(rawString(it["q"])), Correct: clip(correctText(it)), Comment: clip(f.Comment)}
+			if it == nil {
+				sf.Question, sf.Correct = clip(f.Q), clip(f.Correct)
+				if sf.Question == "" {
+					sf.Question = "(frågan finns inte längre i frågebanken)"
+				}
+			}
+			if len(f.Answer) > 0 && string(f.Answer) != "null" {
+				sf.Answer = clip(givenText(it, f.Answer))
+			}
+			if f.TS > 0 {
+				sf.Date = dayOf(f.TS)
+			}
+			out.Flags = append(out.Flags, sf)
 		}
 		testsBy[t.ProfileID] = append(testsBy[t.ProfileID], out)
 	}

@@ -6,8 +6,9 @@ import { withChars } from './chars.js';
 import { goalLabel } from './booklet.js';
 import { html, useState, useEffect, useRef } from './lib.js';
 import {
-  practiceMax, childGoal, hasSpellingLure, shuffle, gradeLocal, isFree, correctAnswerText, newMastery,
+  practiceMax, childGoal, hasSpellingLure, shuffle, gradeLocal, isFree, correctAnswerText, newMastery, blockedItems, withoutItems,
 } from './engine.js';
+import { FlagSheet } from './flag.js';
 import { gradeFree } from './grading.js';
 import { secondsPerAnswer } from './plan.js';
 import { uid } from './repo.js';
@@ -44,7 +45,7 @@ export function pickExam({ goals, mastery, banks, rand = Math.random }) {
 }
 
 // Rättar alla svar. Fritext rättas av AI två åt gången; går AI inte att nå blir frågan "ej rättad".
-async function gradeAll({ ai, test, rows, onProgress }) {
+async function gradeAll({ ai, test, rows, attempts = [], onProgress }) {
   const out = rows.map(() => null);
   let done = 0;
   const free = [];
@@ -58,8 +59,8 @@ async function gradeAll({ ai, test, rows, onProgress }) {
     while (free.length) {
       const i = free.shift();
       try {
-        const g = await gradeFree({ ai, test, item: rows[i].item, answer: rows[i].answer });
-        out[i] = { score: g.score, verdict: g.verdict, met: g.met, feedback: g.feedback, grading: { tier: g.tier, calls: g.calls, escalated: g.escalated } };
+        const g = await gradeFree({ ai, test, item: rows[i].item, answer: rows[i].answer, attempts, careful: true });
+        out[i] = { score: g.score, verdict: g.verdict, met: g.met, feedback: g.feedback, grading: { tier: g.tier, calls: g.calls, escalated: g.escalated, met: g.met, feedback: g.feedback, v: g.v, qk: g.qk } };
       } catch { out[i] = { score: 0, verdict: 'ungraded' }; }
       onProgress(++done);
     }
@@ -80,22 +81,26 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
   const [graded, setGraded] = useState(0);
   const [result, setResult] = useState(null);
   const [err, setErr] = useState('');
+  const [flagRow, setFlagRow] = useState(null); // frågan i genomgången som flaggas
+  const [flagged, setFlagged] = useState({});
   const started = useRef(0);
+  const saving = useRef(null); // sparandet efter rättningen; en flagga väntar in det
   const k = useRef(null);
 
   useEffect(() => {
     (async () => {
-      const [test, goals, banks, mastery, profiles, attempts] = await Promise.all([
+      const [test, goals, banks, mastery, profiles, attempts, flags] = await Promise.all([
         repo.getTest(testId), repo.listGoals(testId), repo.listBanks(testId), repo.listMastery(testId), repo.listProfiles(),
-        repo.listAttempts(testId).catch(() => []),
+        repo.listAttempts(testId).catch(() => []), repo.listFlags(testId).catch(() => []),
       ]);
       const active = goals.filter(childGoal);
-      let picks = pickExam({ goals: active, mastery, banks: withChars(active, withDictation(active, banks)) });
+      // Flaggade frågor (konstiga eller fel) används inte förrän föräldern har tittat.
+      let picks = pickExam({ goals: active, mastery, banks: withoutItems(withChars(active, withDictation(active, banks)), blockedItems(flags)) });
       // Utan AI går fritext inte att rätta, så då används bara frågor som rättas direkt.
       if (!env.ai) picks = picks.filter(p => !isFree(p.item));
       const sec = secondsPerAnswer(attempts);
       const minutes = Math.max(3, Math.round(picks.reduce((a, p) => a + (sec[p.item.kind] || 40), 0) / 60));
-      setS({ test, profile: profiles.find(p => p.id === profileId), picks, minutes });
+      setS({ test, profile: profiles.find(p => p.id === profileId), picks, minutes, attempts: attempts.filter(a => !a.profileId || a.profileId === profileId) });
     })().catch(() => setErr('Provet kunde inte laddas.'));
   }, [testId]);
 
@@ -114,7 +119,7 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
 
   async function finish(all) {
     setPhase('grading');
-    const grades = await gradeAll({ ai: env.ai, test: s.test, rows: all, onProgress: setGraded });
+    const grades = await gradeAll({ ai: env.ai, test: s.test, rows: all, attempts: s.attempts, onProgress: setGraded });
     const items = all.map((r, n) => ({
       goalId: r.goal.id, itemId: r.item.id, level: r.item.level, kind: r.item.kind,
       answer: r.answer, score: grades[n].score, verdict: grades[n].verdict, ...(grades[n].met ? { met: grades[n].met } : {}),
@@ -122,22 +127,24 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
     }));
     const points = items.reduce((a, x) => a + x.score, 0);
     const exam = { id: uid('x'), profileId, ts: started.current, endTs: Date.now(), points, max: items.length, items };
-    setResult({ exam, grades });
+    const attemptIds = items.map(() => uid('a')); // så att en flaggad rättning hittar sitt svar
+    setResult({ exam, grades, attemptIds });
     setPhase('result');
     const pct = points / Math.max(1, items.length);
     setTimeout(() => k.current?.react(pct >= 0.8 ? 'nivaupp' : pct >= 0.5 ? 'ratt' : 'peta'), 400);
-    try {
+    saving.current = (async () => {
       await repo.saveExam(testId, exam);
       // Svaren sparas också som vanliga svar (märkta), så att dagens minuter och statistiken stämmer.
       for (const [n, x] of items.entries()) {
         if (x.answer == null) continue;
         await repo.saveAttempt(testId, {
-          id: uid('a'), profileId, goalId: x.goalId, itemId: x.itemId, level: x.level, kind: x.kind, answer: x.answer,
+          id: attemptIds[n], profileId, goalId: x.goalId, itemId: x.itemId, level: x.level, kind: x.kind, answer: x.answer,
           score: x.score, verdict: x.verdict === 'ungraded' ? 'wrong' : x.verdict, ts: all[n].ts, disputed: false, exam: exam.id,
           ...(grades[n].grading ? { grading: grades[n].grading } : {}),
         });
       }
-    } catch { setErr('Resultatet kunde inte sparas. Kontrollera anslutningen.'); }
+    })();
+    try { await saving.current; } catch { setErr('Resultatet kunde inte sparas. Kontrollera anslutningen.'); }
   }
 
   if (phase === 'intro') return html`<div class="exam" style=${coverVar(s.test.subject)}>
@@ -182,7 +189,20 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
     </section></div>`;
   }
 
-  const { exam, grades } = result;
+  const { exam, grades, attemptIds } = result;
+  // "Något är fel" på en fråga i genomgången: flaggan sparas (notis till föräldern); en flaggad
+  // rättning markeras som invändning så att den syns under Att granska.
+  async function sendFlag(n, { kind, comment }) {
+    const r = rows[n];
+    await repo.saveFlag(testId, { id: uid('f'), kind, profileId, itemId: r.item.id, goalId: r.goal.id, attemptId: r.answer == null ? null : attemptIds[n],
+      q: r.item.q, correct: String(correctAnswerText(r.item) ?? ''), // frågan som den såg ut (vissa skapas i stunden)
+      examId: exam.id, answer: r.answer ?? null, comment, ts: Date.now(), status: 'open', from: 'provläge' });
+    if (kind === 'grading' && r.answer != null) {
+      await saving.current?.catch(() => {}); // svaret måste finnas innan det kan markeras
+      await repo.updateAttempt(testId, attemptIds[n], { disputed: true }).catch(() => {});
+    }
+    setFlagged(f => ({ ...f, [n]: true }));
+  }
   const pct = exam.points / Math.max(1, exam.max);
   const byGoal = new Map();
   rows.forEach((r, n) => { const e = byGoal.get(r.goal.id) || { goal: r.goal, list: [] }; e.list.push(grades[n]); byGoal.set(r.goal.id, e); });
@@ -209,8 +229,12 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
           ${shownAnswer(r, grades[n]) && html`<p class="small">Ditt svar: ${shownAnswer(r, grades[n])}</p>`}
           ${grades[n].verdict !== 'right' && html`<p class="small">Rätt svar: <strong class="pre">${correctAnswerText(r.item)}</strong></p>`}
           ${grades[n].feedback && html`<p class="small muted">${grades[n].feedback}</p>`}
+          ${flagged[n] ? html`<p class="small muted">Tack! En vuxen tittar på det.</p>`
+            : html`<button class="link small" onClick=${() => setFlagRow(n)}>Något är fel</button>`}
         </li>`)}</ol>
       </details>
+      ${flagRow != null && html`<${FlagSheet} canGrade=${grades[flagRow].verdict !== 'right' && rows[flagRow].answer != null && rows[flagRow].item.kind !== 'math'}
+        onSend=${f => sendFlag(flagRow, f)} onClose=${() => setFlagRow(null)} />`}
       <div class="actions">
         <button class="btn ghost" onClick=${back}>Klar</button>
         ${weak.length > 0 && html`<button class="btn primary" onClick=${() => go({ name: 'practice', testId, profileId })}>Öva på det som var svårt</button>`}

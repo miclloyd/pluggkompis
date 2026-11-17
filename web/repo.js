@@ -10,6 +10,7 @@
 //   tests/{id}/events/{eid}         egna nivåhopp (påverkar nivån, ingår i omräkning)
 //   tests/{id}/chats/{cid}          samtal i "Förklara mer" och "Lär ut det" (kind: teach), synliga för föräldern
 //   tests/{id}/exams/{xid}          provlägen med svar och poäng per fråga
+//   tests/{id}/flags/{fid}          barnets flaggor: rättningen eller frågan är fel (Flaggat)
 //   tasks/{id}                      egna skoluppgifter: versioner, feedback, barnets kommentarer
 
 export const SCHEMA_VERSION = 1;
@@ -56,6 +57,10 @@ export function createRepo(store) {
     saveExam: (id, e) => save(`${sub(id, 'exams')}/${e.id}`, e),
     saveChat: (id, c) => save(`${sub(id, 'chats')}/${c.id}`, c),
 
+    listFlags: id => store.list(sub(id, 'flags')),
+    saveFlag: (id, f) => save(`${sub(id, 'flags')}/${f.id}`, f),
+    updateFlag: (id, fid, patch) => store.update(`${sub(id, 'flags')}/${fid}`, patch),
+
     listEvents: id => store.list(sub(id, 'events')),
     saveEvent: (id, e) => save(`${sub(id, 'events')}/${e.id}`, e),
 
@@ -69,7 +74,7 @@ export function createRepo(store) {
     deleteTask: id => store.delete(`tasks/${id}`),
 
     async deleteTest(id) {
-      for (const coll of ['materials', 'goals', 'banks', 'mastery', 'attempts', 'events', 'chats', 'exams']) {
+      for (const coll of ['materials', 'goals', 'banks', 'mastery', 'attempts', 'events', 'chats', 'exams', 'flags']) {
         for (const d of await store.list(sub(id, coll))) await store.delete(`${sub(id, coll)}/${d.id}`);
       }
       await store.delete(`tests/${id}`);
