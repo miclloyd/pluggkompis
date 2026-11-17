@@ -227,3 +227,74 @@ func TestProgressSummaryLatestExam(t *testing.T) {
 		t.Errorf("borttagen fråga: %+v", it)
 	}
 }
+
+// De mest missade frågorna med senaste felsvar, och hur stödet används.
+func TestProgressSummaryMissedAndUse(t *testing.T) {
+	st, ctx := testStore(t), context.Background()
+	set := func(p, v string) {
+		t.Helper()
+		if err := st.Set(ctx, p, []byte(v)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set("profiles/p1", `{"name":"A"}`)
+	set("tests/t1", `{"profileId":"p1","subject":"Bild"}`)
+	set("tests/t1/goals/g1", `{"text":"Gränspunkt","type":"begrepp"}`)
+	set("tests/t1/banks/g1", `{"items":[{"id":"i1","level":3,"kind":"short","q":"Vilka linjer möts?","answer":"Parallella"}]}`)
+	for i, a := range []string{"stödlinjerna", "linjerna", "stödlinjer", "parallella"} {
+		score := 0
+		if a == "parallella" {
+			score = 1
+		}
+		set(fmt.Sprintf("tests/t1/attempts/a%d", 9-i), fmt.Sprintf(`{"goalId":"g1","itemId":"i1","answer":%q,"score":%d,"ts":%d}`, a, score, 1794000000000+i)) // id i omvänd tidsordning
+	}
+	set("tests/t1/attempts/v1", `{"goalId":"g1","itemId":"i1","answer":"BORTTAGEN","score":0,"void":true,"ts":1794000000100}`)
+	set("tests/t1/chats/c1", `{"kind":"tip"}`)
+	set("tests/t1/chats/c2", `{"messages":[]}`)
+	set("tests/t1/flags/f1", `{"kind":"review","from":"granskning","status":"ok","itemId":"i1","goalId":"g1"}`)
+	sum, err := buildSummary(ctx, st, time.Date(2026, 11, 20, 12, 0, 0, 0, stockholm))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tst := sum.Profiles[0].Tests[0]
+	if len(tst.Missed) != 1 || tst.Missed[0].Misses != 3 || tst.Missed[0].Answers != 4 || tst.Missed[0].Question != "Vilka linjer möts?" {
+		t.Fatalf("missade: %+v", tst.Missed)
+	}
+	if strings.Join(tst.Missed[0].Wrong, ",") != "stödlinjerna,linjerna,stödlinjer" {
+		t.Errorf("felsvar: %q", tst.Missed[0].Wrong)
+	}
+	if tst.Use["lästips"] != 1 || tst.Use["förklaraMer"] != 1 || tst.Use["granskning:förståelse"] != 1 {
+		t.Errorf("användning: %v", tst.Use)
+	}
+	if len(tst.Flags) != 0 {
+		t.Errorf("en granskning utan fynd är ingen öppen flagga: %+v", tst.Flags)
+	}
+}
+
+// AI-användningen per dag: anrop (inte de som stoppats av taket), fel och kostnad.
+func TestSummaryAIUsage(t *testing.T) {
+	st, ctx := testStore(t), context.Background()
+	if _, err := newAI(st, "nyckel", Models{}, Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, stockholm)
+	ins := func(ts time.Time, status string, cost float64) {
+		t.Helper()
+		if _, err := st.db.Exec(`INSERT INTO ai_log (ts, bucket, tier, model, status, cost_in, cost_out) VALUES (?, 'child:p1:x', 'quick', 'm', ?, ?, 0)`, ts.UnixMilli(), status, cost); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ins(now.Add(-time.Hour), "ok", 0.01)
+	ins(now.Add(-2*time.Hour), "ok", 0.02)
+	ins(now.Add(-3*time.Hour), "upstream_error", 0)
+	ins(now.Add(-4*time.Hour), "limit", 0)
+	ins(now.AddDate(0, 0, -1), "ok", 0.5)
+	ins(now.AddDate(0, 0, -40), "ok", 9) // utanför 30 dagar
+	days, total := aiUsage(ctx, st, now)
+	if len(days) != 2 || days[0].Date != "2026-11-20" || days[0].Calls != 3 || days[0].Failed != 1 || days[0].Cost != 0.03 {
+		t.Fatalf("dagar: %+v", days)
+	}
+	if total != 0.53 {
+		t.Errorf("30 dagar: %v", total)
+	}
+}

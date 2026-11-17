@@ -92,7 +92,8 @@ func (s *server) flagCreated(ctx context.Context, testID string, body []byte) {
 		return
 	}
 	var f struct {
-		Kind string `json:"kind"` // grading | question
+		Kind string `json:"kind"` // grading | question | review
+		From string `json:"from"` // övning | provläge | granskning
 	}
 	_ = json.Unmarshal(body, &f)
 	var t struct {
@@ -101,6 +102,12 @@ func (s *server) flagCreated(ctx context.Context, testID string, body []byte) {
 	}
 	if raw, err := s.st.Get(ctx, "tests/"+testID); err == nil {
 		_ = json.Unmarshal(raw, &t)
+	}
+	// kind och from skrivs av barnets klient (granskningen körs där). Det som kan förfalskas är
+	// bara notisens text eller att den uteblir; flaggan syns ändå i föräldraläget, och taket
+	// (maxFlagNotices) begränsar antalet.
+	if f.Kind == "review" {
+		return // granskningen fann inget fel i frågan: ingen notis
 	}
 	// Namnet från provets ägare, inte från flaggan (som barnets klient skriver).
 	pid := t.ProfileID
@@ -125,6 +132,10 @@ func (s *server) flagCreated(ctx context.Context, testID string, body []byte) {
 		subject = "ett prov"
 	}
 	var msg bytes.Buffer
-	msg.WriteString(name + " flaggade " + what + " i " + subject + ". Se Flaggat i föräldraläget.")
+	if f.From == "granskning" {
+		msg.WriteString("Granskningen hittade " + what + " som kan vara fel i " + subject + " (" + name + " svarar ofta fel). Se Flaggat i föräldraläget.")
+	} else {
+		msg.WriteString(name + " flaggade " + what + " i " + subject + ". Se Flaggat i föräldraläget.")
+	}
 	go s.notify.send("Pluggkompis", msg.String())
 }

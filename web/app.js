@@ -21,6 +21,7 @@ import { ExamMode } from './exam.js';
 import { Teach } from './teach.js';
 import { TipSheet } from './tips.js';
 import { FlagSheet } from './flag.js';
+import { reviewCandidates, reviewItem } from './review.js';
 import { Sheet } from './sheet.js';
 import { TaskList, TaskView, ParentTasks, SUPPORT_LABEL } from './tasks.js';
 import { PrintSheet } from './print.js';
@@ -31,11 +32,10 @@ import { gradeFree, regradeOnDispute, TIERS } from './grading.js';
 import {
   GOAL_TYPES, TYPE_LABEL, practiceMax, childGoal, parsePages, newMastery, applyResult, gradeLocal, correctAnswerText,
   pickNext, testProgress, goalProgress, allMastered, shuffle, replayMastery, isFree,
-  canJump, jumpUp, dayKey, RETRY_MS, goalTrend, isStuck, blockedItems, withoutItems,
+  canJump, jumpUp, dayKey, RETRY_MS, goalTrend, isStuck, blockedItems, withoutItems, restingGoals, pauseReason, PAUSE_MIN,
 } from './engine.js';
 
 const SESSION_LENGTH = 12;
-const PAUSE_AFTER = 20 * 60 * 1000; // föreslå paus efter 20 minuter i ett sträck
 const COLORS = ['#2148c0', '#1d7a50', '#b4302b', '#7a3fb0', '#b26a00', '#0f7c86'];
 const SUBJECTS = ['Svenska', 'Engelska', 'Matematik', 'NO', 'Biologi', 'Fysik', 'Kemi', 'Teknik', 'SO', 'Religion', 'Historia', 'Geografi', 'Samhällskunskap', 'Moderna språk'];
 
@@ -941,6 +941,8 @@ function givenText(item, given) {
   return String(given ?? '');
 }
 
+const FLAG_FROM = { övning: 'barnet, i övningen', provläge: 'barnet, i provläget', granskning: 'automatisk granskning (noggrann modell)' };
+
 function ParentProgress({ goals, banks, mastery, attempts, events = [], chats: allChats = [], exams = [], materials = [], flags = [], onResolve, onFlag }) {
   const chats = allChats.filter(c => c.kind !== 'teach' && c.kind !== 'tip');
   const tips = allChats.filter(c => c.kind === 'tip');
@@ -1015,7 +1017,7 @@ function ParentProgress({ goals, banks, mastery, attempts, events = [], chats: a
       <ul class="list">${questionFlags.map(f => {
         const it = itemById[f.itemId];
         return html`<li class="dispute">
-          <p class="small muted">${relDay(f.ts)} · ${f.from || ''}</p>
+          <p class="small muted">${relDay(f.ts)} · ${FLAG_FROM[f.from] || f.from || ''}</p>
           <p><strong>${it ? it.q : f.q || 'Frågan finns inte längre'}</strong></p>
           ${(it || f.correct) && html`<p class="small muted">${it && isFree(it) ? 'Exempel på bra svar' : 'Facit'}: <span class="pre">${it ? correctAnswerText(it) : f.correct}</span></p>`}
           ${f.answer != null && html`<p class="small">Barnet svarade: <span class="pre">${givenText(it, f.answer)}</span></p>`}
@@ -1033,7 +1035,7 @@ function ParentProgress({ goals, banks, mastery, attempts, events = [], chats: a
         const it = itemById[f.itemId];
         const a = attempts.find(x => x.id === f.attemptId);
         return html`<li class="dispute">
-          <p class="small muted">${relDay(f.ts)} · ${f.from || ''}${a?.resolved === 'ai-accepted' ? ' · AI:n höjde poängen vid omprövningen' : ''}</p>
+          <p class="small muted">${relDay(f.ts)} · ${FLAG_FROM[f.from] || f.from || ''}${a?.resolved === 'ai-accepted' ? ' · AI:n höjde poängen vid omprövningen' : ''}</p>
           <p><strong>${it ? it.q : f.q || 'Frågan finns inte längre'}</strong></p>
           ${f.answer != null && html`<p class="small">Barnet svarade: <span class="pre">${givenText(it, f.answer)}</span></p>`}
           ${f.comment && html`<p class="chat-ask">${f.comment}</p>`}
@@ -1435,6 +1437,16 @@ function Practice({ env, go, testId, profileId }) {
   const kRef = useRef(null);            // Plumpen
   const [say, setSay] = useState(null); // något Plumpen själv tar upp
   const since = useRef(Date.now());     // start för pausräkningen
+  const reviewing = useRef(false);      // en automatisk granskning åt gången
+  const pauseOffered = useRef({});      // vilka pausförslag som visats i passet (pauseReason)
+  const pauseKey = 'pk.pause.' + profileId;
+  const [pauseUntil, setPauseUntil] = useState(() => { const v = Number(lsGet(pauseKey)) || 0; return v > Date.now() ? v : 0; });
+  const [clock, setClock] = useState(Date.now());
+  useEffect(() => {
+    if (pauseUntil <= Date.now()) return;
+    const t = setInterval(() => { const n = Date.now(); setClock(n); if (n >= pauseUntil) clearInterval(t); }, 1000);
+    return () => clearInterval(t);
+  }, [pauseUntil]);
 
   // Nästa fråga: bara bland de mål som är introducerade i dag enligt planen.
   const choose = (s, recent) => {
@@ -1442,19 +1454,22 @@ function Practice({ env, go, testId, profileId }) {
     const plan = planFor(s);
     const { allowed } = allowedGoals({ goals: s.goals, mastery: s.mastery, attempts: s.attempts, plan, now });
     const targets = plan?.targets || {};
-    return pickNext({ goals: allowed, masteryById: s.mastery, banks: s.banks, recent, now, targets })
-      || pickNext({ goals: s.goals, masteryById: s.mastery, banks: s.banks, recent, now, targets });
+    // Mål som redan övats mycket i dag, eller kört fast utan lästips, vilar (kommer sist).
+    const rest = restingGoals({ goals: s.goals, attempts: s.attempts, tips: s.tips || [], now });
+    return pickNext({ goals: allowed, masteryById: s.mastery, banks: s.banks, recent, now, targets, rest })
+      || pickNext({ goals: s.goals, masteryById: s.mastery, banks: s.banks, recent, now, targets, rest });
   };
   const planFor = s => buildPlan({ test: s.test, goals: s.goals, mastery: s.mastery, banks: s.banks, attempts: s.attempts, schedule: scheduleFor(s.profile), offDates: s.test.offDates || [], studyDates: s.test.studyDates || [] });
 
   useEffect(() => {
     (async () => {
-      const [test, goals, banks, mastery, materials, profiles, attempts, events, flags] = await Promise.all([
+      const [test, goals, banks, mastery, materials, profiles, attempts, events, flags, chats] = await Promise.all([
         repo.getTest(testId), repo.listGoals(testId), repo.listBanks(testId), repo.listMastery(testId), repo.listMaterials(testId), repo.listProfiles(),
         repo.listAttempts(testId).catch(() => []), repo.listEvents(testId).catch(() => []), repo.listFlags(testId).catch(() => []),
+        repo.listChats(testId).catch(() => []),
       ]);
       // Frågor som barnet flaggat som konstiga kommer inte tillbaka förrän föräldern har tittat.
-      const s = { test, goals: goals.filter(childGoal), banks: withoutItems(withChars(goals, withDictation(goals, banks)), blockedItems(flags)), mastery, materials, attempts, events, profile: profiles.find(p => p.id === profileId) };
+      const s = { test, goals: goals.filter(childGoal), banks: withoutItems(withChars(goals, withDictation(goals, banks)), blockedItems(flags)), mastery, materials, attempts, events, flags, tips: chats.filter(c => c.kind === 'tip'), profile: profiles.find(p => p.id === profileId) };
       setState(s);
       setCurrent(choose(s, []));
     })();
@@ -1530,6 +1545,23 @@ function Practice({ env, go, testId, profileId }) {
       await repo.saveMastery(testId, mastery);
       setSaveErr('');
     } catch (e) { setSaveErr('Svaret kunde inte sparas. Kontrollera anslutningen.'); }
+    if (g.score < 1 && env.ai) autoReview(goal, item, [...state.attempts, attempt]); // efter fel eller delvis rätt
+  }
+
+  // Automatisk granskning i bakgrunden (review.js). En fråga som granskningen anser är fel tas
+  // ur passet direkt; föräldern får en notis via servern.
+  async function autoReview(goal, item, attempts) {
+    if (reviewing.current) return;
+    reviewing.current = true;
+    try {
+      const own = attempts.filter(a => !a.profileId || a.profileId === profileId);
+      for (const it of reviewCandidates({ goal, item, bank: state.banks[goal.id] || [], attempts: own, flags: state.flags || [] })) {
+        const f = await reviewItem({ ai: env.ai, repo, testId, test: state.test, goal, item: it, attempts: own, materials: state.materials, profileId });
+        if (!f) continue;
+        setState(s => ({ ...s, flags: [...(s.flags || []), f], ...(f.kind === 'question' ? { banks: withoutItems(s.banks, new Set([it.id])) } : {}) }));
+      }
+    } catch { /* granskningen är ett stöd; barnet ska inte märka fel */ }
+    reviewing.current = false;
   }
 
   async function answer(given) {
@@ -1576,20 +1608,43 @@ function Practice({ env, go, testId, profileId }) {
     resetQuestion();
     setResult(null);
     setSay(null);
-    if (Date.now() - since.current >= PAUSE_AFTER) offerPause();
+    const reason = pauseReason({ sessionMs: Date.now() - since.current, doneToday: minutesOnDay(state.attempts, dayKey(Date.now())),
+      cap: plan?.cap, recentScores: log.map(l => l.score), offered: pauseOffered.current, now: Date.now() });
+    if (reason) offerPause(reason);
     const recent = log.map(l => ({ goalId: l.goalId, itemId: l.itemId }));
     setCurrent(choose(state, recent));
   }
 
-  function offerPause() {
+  // Tidsbestämd paus (pauseReason i engine.js): efter 20 minuter i ett sträck, när dagens plan är
+  // gjord, vid dubbla planen och när det börjar gå trögt. Barnet kan alltid välja att fortsätta.
+  function startPause() {
+    const until = Date.now() + PAUSE_MIN * 60e3;
+    lsSet(pauseKey, String(until));
+    setClock(Date.now());
+    setPauseUntil(until);
+    setSay(null);
+  }
+  function endPause() {
+    lsSet(pauseKey, null);
+    setPauseUntil(0);
+    since.current = Date.now();
+    pauseOffered.current = { ...pauseOffered.current, long: 0, tired: 0 };
+  }
+  function offerPause(reason) {
+    pauseOffered.current = { ...pauseOffered.current, [reason]: Date.now() };
     const mins = Math.round((Date.now() - since.current) / 60000);
-    setSay({ pause: true, text: `Du har pluggat i ${mins} minuter. Hjärnan lär sig bättre med en liten paus. Res dig, sträck på dig och drick lite vatten!`,
-      actions: [
-        { label: 'Ta en paus', primary: true, onClick: () => go({ name: 'child', profileId }) },
-        { label: 'Fortsätt en stund till', onClick: () => { since.current = Date.now() - PAUSE_AFTER + 4 * 60000; setSay(null); kRef.current?.mood('vilar'); } },
-      ] });
+    const text = {
+      long: `Du har pluggat i ${mins} minuter. Hjärnan lär sig bättre med en paus. Res dig, sträck på dig och drick lite vatten!`,
+      cap: 'Nu har du gjort dagens pluggtid. Bra jobbat! Ta en paus, eller sluta för i dag.',
+      double: 'Nu har du pluggat dubbelt så länge som planen säger. Du har gjort jättemycket i dag. Sluta gärna nu, så sitter det bättre i morgon.',
+      tired: 'Det går lite trögare nu, och det är ett tecken på att hjärnan behöver vila. Ta en paus!',
+    }[reason];
+    const actions = [{ label: `Pausa ${PAUSE_MIN} minuter`, primary: true, onClick: startPause }];
+    if (reason === 'cap' || reason === 'double') actions.push({ label: 'Sluta för i dag', onClick: () => go({ name: 'child', profileId }) });
+    actions.push({ label: 'Lite till', onClick: () => { setSay(null); kRef.current?.mood('vilar'); } });
+    setSay({ pause: true, text, actions });
     kRef.current?.mood('peppar');
-    kRef.current?.speak('Dags för en liten paus!');
+    kRef.current?.speak(reason === 'double' ? 'Nu räcker det för i dag!' : 'Dags för en paus!');
   }
 
   // Eget hopp: sparas som händelse så att nivån kan räknas om korrekt senare.
@@ -1629,6 +1684,27 @@ function Practice({ env, go, testId, profileId }) {
     } catch {
       setResult(r => ({ ...r, rechecking: false, recheck: 'parent' }));
     }
+  }
+
+  // Pausen: nedräkning; när den är slut kan barnet fortsätta (eller sluta för i dag).
+  if (pauseUntil > 0) {
+    const left = Math.max(0, pauseUntil - clock);
+    const mm = Math.floor(left / 60000), ss = Math.floor((left % 60000) / 1000);
+    const look = { ...KOMPIS_DEFAULT, ...(state.profile?.kompis || {}) };
+    return html`<div class=${'practice ' + (young ? 'young' : '')} style=${coverVar(state.test.subject)}>
+      <section class="sheet exam-intro pause" role="status">
+        <div class="exam-kompis"><${Kompis} look=${look} /></div>
+        ${left > 0
+          ? html`<h1>Paus</h1>
+            <p class="lead pause-clock" aria-live="off">${mm}:${String(ss).padStart(2, '0')}</p>
+            <p>Res dig, sträck på dig, drick lite vatten eller titta ut genom fönstret. Hjärnan sorterar det du har lärt dig medan du vilar.</p>`
+          : html`<h1>Pausen är slut</h1><p>Vill du köra lite till, eller är du klar för i dag?</p>`}
+        <div class="actions">
+          <button class="btn ghost" onClick=${() => go({ name: 'child', profileId })}>Sluta för i dag</button>
+          ${left <= 0 && html`<button class="btn primary" onClick=${endPause}>Fortsätt</button>`}
+        </div>
+      </section>
+    </div>`;
   }
 
   if (finished && !result) {
@@ -1716,7 +1792,8 @@ function Practice({ env, go, testId, profileId }) {
     ${saveErr && html`<p class="notice bad">${saveErr}</p>`}
     ${sheet === 'source' && html`<${SourceSheet} files=${env.files} libs=${env.config?.libs} item=${item} materials=${state.materials} before=${!result} onClose=${() => setSheet(null)} />`}
     ${sheet === 'flag' && result && html`<${FlagSheet} canGrade=${result.verdict !== 'right' && !result.dontKnow && current?.item.kind !== 'math'} onSend=${sendFlag} onClose=${() => setSheet(null)} />`}
-    ${sheet === 'tip' && tipGoal && html`<${TipSheet} env=${env} testId=${testId} profileId=${profileId} goalIds=${[tipGoal]} name=${{ ...KOMPIS_DEFAULT, ...(state.profile?.kompis || {}) }.name} onClose=${() => setSheet(null)} />`}
+    ${sheet === 'tip' && tipGoal && html`<${TipSheet} env=${env} testId=${testId} profileId=${profileId} goalIds=${[tipGoal]} name=${{ ...KOMPIS_DEFAULT, ...(state.profile?.kompis || {}) }.name}
+      onClose=${() => { setSheet(null); repo.listChats(testId).then(c => setState(s => ({ ...s, tips: c.filter(x => x.kind === 'tip') }))).catch(() => {}); }} />`}
     ${sheet === 'explain' && html`<${ExplainSheet} look=${{ ...KOMPIS_DEFAULT, ...(state.profile?.kompis || {}) }} ai=${env.ai} test=${state.test} item=${item} answerText=${answerText} verdict=${result?.verdict} material=${mat}
       onClose=${() => setSheet(null)}
       onSave=${messages => {
@@ -1724,7 +1801,7 @@ function Practice({ env, go, testId, profileId }) {
         repo.saveChat(testId, { id: chatId.current, profileId, goalId: goal.id, itemId: item.id, q: item.q, ts: Date.now(), messages }).catch(() => {});
       }} />`}
     ${!introItem && html`<${KompisDock} kRef=${kRef} look=${{ ...KOMPIS_DEFAULT, ...(state.profile?.kompis || {}) }} say=${say}
-      onDismiss=${() => { if (say?.pause) { since.current = Date.now() - PAUSE_AFTER + 4 * 60000; } setSay(null); }}
+      onDismiss=${() => setSay(null)}
       menu=${result && !result.pending && !result.needsSelf
         ? [...(env.ai ? [{ label: 'Förklara mer', onClick: () => setSheet('explain') }] : []), { label: 'Läs i materialet', onClick: () => setSheet('source') },
           ...(env.ai ? [{ label: 'Vad ska jag läsa på?', onClick: () => { setTipGoal(goal.id); setSheet('tip'); } }] : [])]

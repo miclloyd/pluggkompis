@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -85,5 +86,54 @@ func TestFlagNoticeLimit(t *testing.T) {
 	}
 	if !n.allow("p1", now.Add(24*time.Hour)) {
 		t.Error("taket gäller per dag")
+	}
+}
+
+// Granskningens flaggor: "förståelse" (kind review) ger ingen notis, ett fynd ger en egen text.
+func TestFlagNoticeReview(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	ntfy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		got = append(got, string(b))
+		mu.Unlock()
+	}))
+	defer ntfy.Close()
+	a, h := testServer(t)
+	a.notify = &notifier{url: ntfy.URL, client: ntfy.Client()}
+	seedFamily(t, h)
+	do(h, child, "PUT", "/api/store/tests/t1/flags/r1", `{"kind":"review","from":"granskning","status":"ok"}`)
+	do(h, child, "PUT", "/api/store/tests/t1/flags/r2", `{"kind":"question","from":"granskning","status":"open"}`)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n >= 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || !strings.Contains(got[0], "Granskningen hittade en fråga som kan vara fel i SO") {
+		t.Errorf("notiser: %q", got)
+	}
+}
+
+// Granskningens "förståelse" (kind review) skickar ingen notis och räknas inte mot taket.
+func TestFlagCreatedReviewSilent(t *testing.T) {
+	a, h := testServer(t)
+	a.notify = &notifier{url: "http://127.0.0.1:1", client: &http.Client{Timeout: time.Second}} // ingen server: bara räknaren prövas
+	seedFamily(t, h)
+	a.flagCreated(context.Background(), "t1", []byte(`{"kind":"review","from":"granskning"}`))
+	if len(a.notify.sent) != 0 {
+		t.Errorf("review räknades som notis: %v", a.notify.sent)
+	}
+	a.flagCreated(context.Background(), "t1", []byte(`{"kind":"question","from":"granskning"}`))
+	if len(a.notify.sent) != 1 {
+		t.Errorf("ett fynd ska räknas: %v", a.notify.sent)
 	}
 }

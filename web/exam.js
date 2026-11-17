@@ -19,7 +19,8 @@ export const EXAM_MAX = 12;
 
 // Frågorna: en per mål på den nivå barnet nått (minst nivå 2, som på ett prov), tyngst vägda mål
 // först om de är fler än EXAM_MAX. Få mål ger två frågor per mål.
-export function pickExam({ goals, mastery, banks, rand = Math.random }) {
+//   avoid: frågor från de senaste provlägena; de tas sist, så att provet byts ut lite varje gång
+export function pickExam({ goals, mastery, banks, rand = Math.random, avoid = new Set() }) {
   const usable = goals.filter(g => (banks[g.id] || []).length);
   const ordered = usable.slice().sort((a, b) => (b.weight || 2) - (a.weight || 2) || rand() - 0.5).slice(0, EXAM_MAX);
   const perGoal = ordered.length <= EXAM_MAX / 2 ? 2 : 1;
@@ -36,7 +37,7 @@ export function pickExam({ goals, mastery, banks, rand = Math.random }) {
       const order = n === 0 ? levels : [...levels.slice(1), levels[0]];
       for (const l of order) {
         const pool = shuffle(bank.filter(it => it.level === l && !taken.has(it.id)), rand)
-          .sort((a, b) => ((m.seen || {})[a.id] || 0) - ((m.seen || {})[b.id] || 0));
+          .sort((a, b) => (avoid.has(a.id) - avoid.has(b.id)) || ((m.seen || {})[a.id] || 0) - ((m.seen || {})[b.id] || 0));
         if (pool.length) { taken.add(pool[0].id); out.push({ goal: g, item: pool[0] }); break; }
       }
     }
@@ -82,6 +83,12 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
   const [result, setResult] = useState(null);
   const [err, setErr] = useState('');
   const [flagRow, setFlagRow] = useState(null); // frågan i genomgången som flaggas
+  const [, tick] = useState(0); // ritar om introt när en pågående paus tar slut
+  useEffect(() => {
+    if (phase !== 'intro') return; // bara introt visar pausen
+    const t = setInterval(() => tick(x => x + 1), 15000);
+    return () => clearInterval(t);
+  }, [phase]);
   const [flagged, setFlagged] = useState({});
   const started = useRef(0);
   const saving = useRef(null); // sparandet efter rättningen; en flagga väntar in det
@@ -89,13 +96,16 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
 
   useEffect(() => {
     (async () => {
-      const [test, goals, banks, mastery, profiles, attempts, flags] = await Promise.all([
+      const [test, goals, banks, mastery, profiles, attempts, flags, exams] = await Promise.all([
         repo.getTest(testId), repo.listGoals(testId), repo.listBanks(testId), repo.listMastery(testId), repo.listProfiles(),
-        repo.listAttempts(testId).catch(() => []), repo.listFlags(testId).catch(() => []),
+        repo.listAttempts(testId).catch(() => []), repo.listFlags(testId).catch(() => []), repo.listExams(testId).catch(() => []),
       ]);
+      // Frågorna från de två senaste provlägena tas sist: provet ska mäta kunskap, inte minne.
+      const avoid = new Set(exams.filter(x => !x.profileId || x.profileId === profileId).sort((a, b) => b.ts - a.ts).slice(0, 2)
+        .flatMap(x => (x.items || []).map(i => i.itemId)));
       const active = goals.filter(childGoal);
       // Flaggade frågor (konstiga eller fel) används inte förrän föräldern har tittat.
-      let picks = pickExam({ goals: active, mastery, banks: withoutItems(withChars(active, withDictation(active, banks)), blockedItems(flags)) });
+      let picks = pickExam({ goals: active, mastery, banks: withoutItems(withChars(active, withDictation(active, banks)), blockedItems(flags)), avoid });
       // Utan AI går fritext inte att rätta, så då används bara frågor som rättas direkt.
       if (!env.ai) picks = picks.filter(p => !isFree(p.item));
       const sec = secondsPerAnswer(attempts);
@@ -147,6 +157,9 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
     try { await saving.current; } catch { setErr('Resultatet kunde inte sparas. Kontrollera anslutningen.'); }
   }
 
+  // En pågående paus från övningen (app.js startPause) gäller även provläget.
+  let pausedMin = 0;
+  try { pausedMin = Math.ceil(((Number(localStorage.getItem('pk.pause.' + profileId)) || 0) - Date.now()) / 60000); } catch { /* ingen lagring */ }
   if (phase === 'intro') return html`<div class="exam" style=${coverVar(s.test.subject)}>
     <section class="sheet exam-intro">
       <p class="eyebrow">${s.test.subject} · Provläge</p>
@@ -160,7 +173,9 @@ export function ExamMode({ env, go, testId, profileId, Question }) {
           </ul>
           <p class="muted small">Provläget visar vad som sitter. Det ändrar inte dina nivåer.</p>
           <div class="actions"><button class="btn ghost" onClick=${back}>Inte nu</button>
-            <button class="btn primary big" onClick=${() => { started.current = Date.now(); setPhase('run'); }}>Starta provet</button></div>`
+            ${pausedMin > 0
+              ? html`<p class="notice">Du har paus i ${pausedMin} minut${pausedMin === 1 ? '' : 'er'} till. Provläget väntar på dig.</p>`
+              : html`<button class="btn primary big" onClick=${() => { started.current = Date.now(); setPhase('run'); }}>Starta provet</button>`}</div>`
         : html`<p class="lead">Det finns inga frågor att ställa än.</p><div class="actions"><button class="btn ghost" onClick=${back}>Tillbaka</button></div>`}
     </section>
   </div>`;

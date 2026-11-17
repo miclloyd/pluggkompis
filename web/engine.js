@@ -237,7 +237,8 @@ export function hasSpellingLure(item) {
 //   targets: målnivå per mål från dagsplanen när ambitionen är sänkt (plan.targets). Ett mål som
 //   klarat sin målnivå (står på nivån över) kommer efter de andra, men repeteras fortfarande.
 //   Samma gräns som remainingWork i plan.js: nivån man står på räknas som kvar.
-export function pickNext({ goals, masteryById, banks, recent = [], now, rand = Math.random, targets = {} }) {
+//   rest: mål som vilar (restingGoals) och kommer efter alla andra
+export function pickNext({ goals, masteryById, banks, recent = [], now, rand = Math.random, targets = {}, rest = new Set() }) {
   const candidates = [];
   for (const g of goals) {
     const m = refreshMastery(g, masteryById[g.id], banks[g.id]) || newMastery(g.id);
@@ -255,6 +256,7 @@ export function pickNext({ goals, masteryById, banks, recent = [], now, rand = M
     score += (g.weight || 2) * 6;
     score -= recentGoal ? 60 : 0;
     score -= targets[g.id] && m.level > targets[g.id] && !m.passedMax ? 80 : 0;
+    score -= rest.has(g.id) ? 200 : 0;
     score += rand() * 12;
     candidates.push({ g, m, items, score });
   }
@@ -475,4 +477,61 @@ export function blockedItems(flags = []) {
 export function withoutItems(banks, blocked) {
   if (!blocked.size) return banks;
   return Object.fromEntries(Object.entries(banks).map(([gid, items]) => [gid, (items || []).filter(i => !blocked.has(i.id))]));
+}
+
+// ---- Mindre nötande, automatisk granskning och pauser (0.24) ----
+
+export const GOAL_DAY_MAX = 10;     // egna svar per mål och dag innan målet får vila till i morgon
+export const REVIEW_MIN = 5;        // svar på en fråga innan den kan granskas automatiskt
+export const REVIEW_MISS_RATE = 0.6; // ... och minst så stor andel fel
+export const REVIEW_AGAIN = 5;      // ny granskning först när så många fler fel kommit till
+export const STUCK_REVIEW_MIN = 4;    // fastkört mål: målets mest missade fråga granskas från så många svar
+export const STUCK_REVIEW_RATE = 0.5; // ... och minst så stor andel fel
+
+// Svar på en fråga som räknas för granskningen: barnets egna (även provläget), inte borttagna,
+// äldst först. Fel = fel eller delvis rätt (poäng under 1).
+export function itemStats(itemId, attempts) {
+  const own = attempts.filter(a => a.itemId === itemId && !a.helped && !a.dontKnow && !a.void).sort((a, b) => a.ts - b.ts);
+  const misses = own.filter(a => (Number(a.score) || 0) < 1);
+  return { n: own.length, misses: misses.length, wrong: misses.slice(-6).map(a => a.answer) };
+}
+
+// Ska frågan granskas av den noggranna modellen? Ofta fel, och inte granskad sedan felen ökade.
+//   reviews: tidigare granskningar (flaggor med kind 'review' eller från 'granskning') för frågan
+export function needsReview({ item, attempts, reviews = [] }) {
+  if (['math', 'dictation'].includes(item.kind)) return false; // rättas lokalt mot ett säkert facit
+  const s = itemStats(item.id, attempts);
+  if (s.n < REVIEW_MIN || s.misses / s.n < REVIEW_MISS_RATE) return false;
+  const last = reviews.filter(r => r.itemId === item.id).sort((a, b) => b.ts - a.ts)[0];
+  return !last || s.misses >= (last.misses || 0) + REVIEW_AGAIN;
+}
+
+// Mål som vilar i det här passet: många svar redan i dag, eller fastkört utan att barnet fått
+// ett lästips i dag. De kommer efter alla andra mål (pickNext rest), inte bort helt.
+export function restingGoals({ goals, attempts, tips = [], now = Date.now() }) {
+  const today = dayKey(now);
+  const tipped = new Set(tips.filter(c => dayKey(c.ts) === today).flatMap(c => c.goalIds || []));
+  const rest = new Set();
+  for (const g of goals) {
+    const todayOwn = attempts.filter(a => a.goalId === g.id && !a.helped && !a.exam && !a.void && dayKey(a.ts) === today).length;
+    if (todayOwn >= GOAL_DAY_MAX || (isStuck(goalTrend(g.id, attempts)) && !tipped.has(g.id))) rest.add(g.id);
+  }
+  return rest;
+}
+
+// Paus: föreslås efter 20 minuter i ett sträck, när dagens plan är gjord, vid dubbla planen och
+// när det börjar gå sämre i passet (trötthet). Pausen är tidsbestämd; efter den går det att
+// fortsätta. Dubbla planen räknas som att planen också är föreslagen.
+export const PAUSE_MIN = 10;
+export const PAUSE_AGAIN = 10 * 60e3; // efter "Lite till" kommer påminnelsen om långt pass/trötthet igen
+//   offered: skäl → när det senast föreslogs (ms). Plan och dubbla planen föreslås en gång per pass,
+//   långt pass och trötthet igen efter PAUSE_AGAIN.
+export function pauseReason({ sessionMs, doneToday, cap, recentScores = [], offered = {}, now = Date.now() }) {
+  const again = r => !offered[r] || now - offered[r] >= PAUSE_AGAIN;
+  if (cap && doneToday >= 2 * cap && !offered.double) return 'double';
+  if (cap && doneToday >= cap && !offered.cap && !offered.double) return 'cap';
+  const last = recentScores.slice(-8);
+  if (sessionMs >= 8 * 60e3 && last.length >= 8 && last.reduce((a, s) => a + s, 0) / last.length < 0.5 && again('tired')) return 'tired';
+  if (sessionMs >= 20 * 60e3 && again('long')) return 'long';
+  return null;
 }
