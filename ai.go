@@ -240,9 +240,10 @@ func (a *AI) complete(ctx context.Context, tier string, msgs []message, images [
 		msgs[len(msgs)-1] = message{Role: "user", Content: blocks}
 	}
 	body := map[string]any{"model": model, "max_tokens": maxTokens, "messages": msgs}
-	if stable {
-		body["temperature"] = 0
-	}
+	// stable: dagens modeller tar inte emot temperature (400 "temperature is deprecated", 2026-11-17),
+	// så det skickas inte. Stabiliteten kommer från att samma svar återanvänder sin rättning
+	// (web/grading.js previousGrade) och från den noggranna modellen i provläget.
+	_ = stable
 	if wantJSON {
 		body["system"] = jsonSystem
 	}
@@ -359,7 +360,7 @@ type aiRequest struct {
 	Tier      string          `json:"tier"`
 	JSON      bool            `json:"json"`
 	Stream    bool            `json:"stream"`  // text i bitar (NDJSON), som artifactens onText
-	Stable    bool            `json:"stable"`  // temperatur 0: rättning, där samma svar ska få samma bedömning
+	Stable    bool            `json:"stable"`  // rättning: samma svar ska få samma bedömning (skickar ingen temperature, se complete)
 	Purpose   string          `json:"purpose"` // child | build | task
 	TaskID    string          `json:"taskId"`
 	TestID    string          `json:"testId"`

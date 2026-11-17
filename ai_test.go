@@ -463,3 +463,17 @@ func TestAnthropicErrors(t *testing.T) {
 		}
 	}
 }
+
+// Rättningens "stable" får aldrig skicka temperature: dagens modeller svarar 400 på den
+// (2026-11-17 föll all fritexträttning på det).
+func TestAIStableSendsNoTemperature(t *testing.T) {
+	_, h, fake, _ := aiServer(t, Limits{})
+	fake.reply = `{"met":[true]}`
+	w := aiCall(h, child, nil, map[string]any{"prompt": "x", "json": true, "stable": true, "tier": "default", "purpose": "child", "profileId": "p1"})
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if _, ok := fake.last["temperature"]; ok {
+		t.Errorf("temperature skickades: %v", fake.last)
+	}
+}
