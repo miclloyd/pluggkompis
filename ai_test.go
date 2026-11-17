@@ -31,6 +31,12 @@ func (f *fakeAnthropic) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.key = r.Header.Get("x-api-key")
 	b, _ := io.ReadAll(r.Body)
 	json.Unmarshal(b, &f.last)
+	// Som det riktiga API:t: temperature tas inte emot av dagens modeller (400).
+	if _, ok := f.last["temperature"]; ok {
+		w.WriteHeader(400)
+		w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"temperature is deprecated for this model."}}`))
+		return
+	}
 	if f.status != 0 {
 		w.WriteHeader(f.status)
 		w.Write([]byte(`{"type":"error","error":{"type":"overloaded_error","message":"x"}}`))

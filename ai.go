@@ -226,7 +226,7 @@ func parsePrompt(raw json.RawMessage) ([]message, error) {
 
 const jsonSystem = "Svara enbart med ett giltigt JSON-objekt, utan förklarande text och utan kodblock."
 
-func (a *AI) complete(ctx context.Context, tier string, msgs []message, images []image, wantJSON, stable bool, maxTokens int) (text string, truncated bool, in, out int, err error) {
+func (a *AI) complete(ctx context.Context, tier string, msgs []message, images []image, wantJSON bool, maxTokens int) (text string, truncated bool, in, out int, err error) {
 	model := map[string]string{"quick": a.models.Quick, "default": a.models.Default, "complex": a.models.Complex}[tier]
 	if len(images) > 0 {
 		last := msgs[len(msgs)-1]
@@ -240,10 +240,9 @@ func (a *AI) complete(ctx context.Context, tier string, msgs []message, images [
 		msgs[len(msgs)-1] = message{Role: "user", Content: blocks}
 	}
 	body := map[string]any{"model": model, "max_tokens": maxTokens, "messages": msgs}
-	// stable: dagens modeller tar inte emot temperature (400 "temperature is deprecated", 2026-11-17),
-	// så det skickas inte. Stabiliteten kommer från att samma svar återanvänder sin rättning
+	// Ingen temperature: dagens modeller svarar 400 på den ("temperature is deprecated",
+	// 2026-11-17). Rättningens stabilitet kommer från att samma svar återanvänder sin rättning
 	// (web/grading.js previousGrade) och från den noggranna modellen i provläget.
-	_ = stable
 	if wantJSON {
 		body["system"] = jsonSystem
 	}
@@ -360,7 +359,7 @@ type aiRequest struct {
 	Tier      string          `json:"tier"`
 	JSON      bool            `json:"json"`
 	Stream    bool            `json:"stream"`  // text i bitar (NDJSON), som artifactens onText
-	Stable    bool            `json:"stable"`  // rättning: samma svar ska få samma bedömning (skickar ingen temperature, se complete)
+	Stable    bool            `json:"stable"`  // rättning (web/grading.js); påverkar inte anropet: ingen temperature, se complete
 	Purpose   string          `json:"purpose"` // child | build | task
 	TaskID    string          `json:"taskId"`
 	TestID    string          `json:"testId"`
@@ -487,7 +486,7 @@ func (s *server) aiHandler(w http.ResponseWriter, r *http.Request) {
 		s.ai.stream(w, r.Context(), bucket, q.Tier, model, msgs, maxTokens)
 		return
 	}
-	text, truncated, in, out, cerr := s.ai.complete(r.Context(), q.Tier, msgs, images, q.JSON, q.Stable, maxTokens)
+	text, truncated, in, out, cerr := s.ai.complete(r.Context(), q.Tier, msgs, images, q.JSON, maxTokens)
 	if cerr != nil {
 		e := cerr.(*aiError)
 		s.ai.logCall(bucket, q.Tier, model, e.code, in, out, e.detail)
