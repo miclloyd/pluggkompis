@@ -2,6 +2,7 @@
 // Varje steg sparar löpande, så ett avbrott tappar inget färdigt arbete.
 // Inga automatiska omförsök: ett schemafel får en rättelse, sedan stoppar steget med ett tydligt fel.
 import { mathBank } from './math.js';
+import { glosaBank } from './glosa.js';
 import {
   interpretPrompt, validateInterpret, goalsPrompt, validateGoals,
   bankPrompt, validateBank, correctionPrompt, PROMPT_VERSION,
@@ -86,6 +87,11 @@ export async function buildBank({ ai, repo, test, goals, materials, existing, on
     if (items.length) await repo.saveBank(test.id, g.id, items);
   }
   goals = goals.filter(g => g.type !== 'matematik');
+  // Glosor: nivå 1–3 ur ordlistan (glosa.js), inte av AI, när förhöret har minst fyra ord.
+  for (const g of goals.filter(g => g.type === 'glosa' && !existing[g.id]?.length)) {
+    const items = glosaBank(g, goals);
+    if (items.length) { await repo.saveBank(test.id, g.id, items); existing = { ...existing, [g.id]: items }; }
+  }
   if (!goals.some(g => !existing[g.id]?.length)) return { short: [] };
   if (!ai) throw new StepError('Claude är inte tillgängligt, så frågor kan inte skapas här.');
   const todo = goals.filter(g => !existing[g.id]?.length);
@@ -93,7 +99,8 @@ export async function buildBank({ ai, repo, test, goals, materials, existing, on
   const glosor = todo.filter(g => g.type === 'glosa');
   const other = todo.filter(g => g.type !== 'glosa');
   for (let i = 0; i < other.length; i += 3) batches.push(other.slice(i, i + 3));
-  for (let i = 0; i < glosor.length; i += 6) batches.push(glosor.slice(i, i + 6));
+  // Glosor som ändå går till AI (färre än fyra ord i förhöret): två i taget, så svaret blir kort.
+  for (let i = 0; i < glosor.length; i += 2) batches.push(glosor.slice(i, i + 2));
 
   const validRefs = new Set(materials.flatMap(m => (m.pages || []).map(p => `${m.ref}:${p.p}`)));
   const short = [];
@@ -124,7 +131,7 @@ export async function buildHighBank({ ai, repo, test, goals, materials, existing
   const glosor = todo.filter(g => g.type === 'glosa');
   const other = todo.filter(g => g.type !== 'glosa');
   for (let i = 0; i < other.length; i += 2) batches.push(other.slice(i, i + 2));
-  for (let i = 0; i < glosor.length; i += 6) batches.push(glosor.slice(i, i + 6));
+  for (let i = 0; i < glosor.length; i += 3) batches.push(glosor.slice(i, i + 3)); // korta svar (se buildBank)
 
   const validRefs = new Set(materials.flatMap(m => (m.pages || []).map(p => `${m.ref}:${p.p}`)));
   const short = [];

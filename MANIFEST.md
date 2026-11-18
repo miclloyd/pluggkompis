@@ -70,6 +70,7 @@ pluggkompis/
 | `web/theme.js` | ui | Ljust/mörkt/som enheten |
 | `web/exam.js` | ui + engine | Provläge: urval (`pickExam`), rättning på slutet, resultat |
 | `web/teach.js` | ui | Lär ut det |
+| `web/glosa.js` | engine | Glosor: frågebanken nivå 1–3 ur ordlistan (inte AI) |
 | `web/tips.js` | ui | Lästips: var i materialet barnet ska läsa och vad det kan göra, för fastkörda mål (`TipSheet`) |
 | `web/print.js` | ui | Instuderingshäfte som PDF (jsPDF), svar som CSV, säkerhetskopia som JSON |
 | `dev/harness/build.sh` | test | Bygger `web/` med lokala bibliotek och `stub.js` till `dev/harness/site` |
