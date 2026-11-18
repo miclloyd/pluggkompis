@@ -79,6 +79,10 @@ type summaryGoal struct {
 	RecentScore   float64 `json:"recentScore"`        // 0 när recentAnswers är 0
 	Assisted      int     `json:"assisted,omitempty"` // svar med hjälp (materialet före svaret, Jag vet inte)
 	LastPracticed string  `json:"lastPracticed,omitempty"`
+	// Glosmål: ordet, översättningen och språkparet (för felsökning av glosförhör).
+	Term        string `json:"term,omitempty"`
+	Translation string `json:"translation,omitempty"`
+	Langs       string `json:"langs,omitempty"`
 }
 
 type summaryExam struct {
@@ -126,6 +130,18 @@ type summaryMissed struct {
 	Answers  int      `json:"answers"`
 	Misses   int      `json:"misses"`
 	Wrong    []string `json:"wrong,omitempty"`
+}
+
+// Ett misslyckat AI-anrop: när, vilken sorts anrop, status och Anthropics felmeddelande.
+type summaryAIError struct {
+	At     string  `json:"at"`
+	Kind   string  `json:"kind"` // child | build | task
+	Tier   string  `json:"tier"`
+	Status string  `json:"status"`
+	Detail string  `json:"detail,omitempty"`
+	In     int     `json:"inputTokens"`
+	Out    int     `json:"outputTokens"`
+	Cost   float64 `json:"costUSD"`
 }
 
 // AI-användningen per dag (ai_log): anrop, fel och kostnad i dollar.
@@ -187,6 +203,7 @@ type progressSummary struct {
 	Skipped     int              `json:"skipped,omitempty"` // dokument som inte gick att läsa
 	AI          []summaryAIDay   `json:"ai,omitempty"`      // AI-användning per dag, 28 dagar, nyaste först
 	AICost30    float64          `json:"aiCostUSD30d,omitempty"`
+	AIErrors    []summaryAIError `json:"aiErrors,omitempty"` // de senaste misslyckade AI-anropen (inget innehåll)
 	Profiles    []summaryProfile `json:"profiles"`
 }
 
@@ -270,6 +287,9 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 		Weight  num    `json:"weight"`
 		Order   num    `json:"order"`
 		Removed bool   `json:"removed"`
+		Term    string `json:"term"`
+		Transl  string `json:"translation"`
+		Langs   string `json:"langs"`
 	}
 	type bank struct {
 		ID    string            `json:"id"`
@@ -432,6 +452,9 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 				mx = max(1, min(mx, top[g.ID]))
 			}
 			sg := summaryGoal{Text: g.Text, Type: g.Type, Weight: g.Weight.int(), MaxLevel: mx}
+			if g.Type == "glosa" {
+				sg.Term, sg.Translation, sg.Langs = clip(g.Term), clip(g.Transl), g.Langs
+			}
 			if m, ok := mBy[g.ID]; ok {
 				sg.Level, sg.PassedMax = m.Level.int(), m.PassedMax
 				if m.LastPracticed > 0 {
@@ -619,6 +642,7 @@ func buildSummary(ctx context.Context, st *Store, now time.Time) (*progressSumma
 		Skipped:  skipped,
 	}
 	sum.AI, sum.AICost30 = aiUsage(ctx, st, now)
+	sum.AIErrors = aiErrors(ctx, st)
 	for _, p := range profiles {
 		sp := summaryProfile{Name: p.Name, BirthYear: p.BirthYear.int(), MaxMinutes: p.MaxMinutes.int(), Days: []summaryDay{}, Tests: testsBy[p.ID]}
 		if p.Schedule != nil {
@@ -884,4 +908,28 @@ func aiUsage(ctx context.Context, st *Store, now time.Time) ([]summaryAIDay, flo
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Date > out[j].Date })
 	return out, float64(int(total*100+0.5)) / 100
+}
+
+// aiErrors: de tio senaste misslyckade anropen (inte de som stoppats av taket).
+func aiErrors(ctx context.Context, st *Store) []summaryAIError {
+	rows, err := st.db.QueryContext(ctx, `SELECT ts, bucket, tier, status, detail, input_tokens, output_tokens,
+  COALESCE(cost_in, 0) + COALESCE(cost_out, 0) FROM ai_log WHERE status NOT IN ('ok', 'limit') ORDER BY ts DESC LIMIT 10`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []summaryAIError
+	for rows.Next() {
+		var ts int64
+		var bucket string
+		var e summaryAIError
+		if rows.Scan(&ts, &bucket, &e.Tier, &e.Status, &e.Detail, &e.In, &e.Out, &e.Cost) != nil {
+			continue
+		}
+		e.At = time.UnixMilli(ts).In(stockholm).Format("2006-01-02 15:04")
+		e.Kind, _, _ = strings.Cut(bucket, ":")
+		e.Detail = clip(e.Detail)
+		out = append(out, e)
+	}
+	return out
 }

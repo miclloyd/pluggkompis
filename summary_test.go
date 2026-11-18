@@ -298,3 +298,20 @@ func TestSummaryAIUsage(t *testing.T) {
 		t.Errorf("30 dagar: %v", total)
 	}
 }
+
+func TestSummaryAIErrors(t *testing.T) {
+	st, ctx := testStore(t), context.Background()
+	if _, err := newAI(st, "nyckel", Models{}, Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, stockholm)
+	for _, r := range []struct{ status, detail string }{{"ok", ""}, {"limit", ""}, {"invalid_json", "trasigt svar"}} {
+		if _, err := st.db.Exec(`INSERT INTO ai_log (ts, bucket, tier, model, status, detail, input_tokens, output_tokens) VALUES (?, 'build:t1', 'default', 'm', ?, ?, 10, 16000)`, now.UnixMilli(), r.status, r.detail); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := aiErrors(ctx, st)
+	if len(e) != 1 || e[0].Kind != "build" || e[0].Status != "invalid_json" || e[0].Out != 16000 || e[0].Detail != "trasigt svar" {
+		t.Errorf("fel: %+v", e)
+	}
+}
