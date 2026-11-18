@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -258,5 +260,18 @@ func TestHealthz(t *testing.T) {
 	}
 	if w := do(h, "9.9.9.9:1", "GET", "/healthz/../api/config", ""); w.Code == 200 && strings.Contains(w.Body.String(), "features") {
 		t.Fatal("healthz släppte igenom något annat")
+	}
+}
+
+// /api/config bär appens version och en hash av webbfilerna (för "Ny version finns").
+func TestConfigBuild(t *testing.T) {
+	c := clientConfig(false)
+	if b, _ := c["build"].(string); len(b) != 12 || c["version"] != version {
+		t.Errorf("config: %v %v", c["build"], c["version"])
+	}
+	// Inte en hash av bara versionen: webbfilerna måste ha lästs (annars ändras den aldrig med koden).
+	h := sha256.Sum256([]byte(version))
+	if webBuild == hex.EncodeToString(h[:])[:12] {
+		t.Error("webBuild bygger inte på webbfilerna")
 	}
 }

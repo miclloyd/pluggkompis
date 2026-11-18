@@ -65,11 +65,26 @@ function App() {
   const [route, setRoute] = useState({ name: 'start' });
   const [parentOk, setParentOk] = useState(false);
   const [theme, setTheme] = useState(() => lsGet('pk.theme') || 'auto');
+  const [newVersion, setNewVersion] = useState(false); // servern har fått en ny version (web.go webBuild)
 
   useEffect(() => {
     loadEnvironment().then(async e => { const repo = createRepo(e.store); const auth = e.auth || createLocalAuth(repo); const st = await auth.status().catch(() => ({})); setEnv({ ...e, repo, auth, onLan: !!st.lan && !!st.loggedIn }); }).catch(e => setBootErr(errText(e)));
   }, []);
   useEffect(() => { applyTheme(theme); }, [theme]);
+  // Ny version på servern: kollas var femte minut och när appen kommer fram igen (t.ex. när
+  // hemskärmsappen öppnas efter en stund). Ingen tvångsomladdning: barnet kan vara mitt i en fråga.
+  // "Senare" döljer bannern till nästa kontroll. Omladdningen hämtar ny kod: alla statiska filer
+  // har Cache-Control no-cache (web.go headers) och inga validatorer, så de hämtas på nytt.
+  useEffect(() => {
+    const mine = env?.config?.build;
+    if (!mine) return;
+    const check = () => fetch('/api/config', { credentials: 'same-origin', cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null)).then(c => { if (c?.build && c.build !== mine) setNewVersion(true); }).catch(() => {});
+    const onVis = () => { if (document.visibilityState === 'visible') check(); };
+    const t = setInterval(check, 5 * 60e3);
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
+  }, [env]);
   // Barnets eget val gäller när barnet är inne i appen.
   useEffect(() => {
     if (!env || !route.profileId) return;
@@ -115,6 +130,11 @@ function App() {
         </span>
       </div>
     </header>
+    ${newVersion && html`<div class="notice update" role="status">
+      <span>En ny version av Pluggkompis finns.</span>
+      <span class="actions"><button class="btn primary small" onClick=${() => location.reload()}>Ladda om</button>
+        <button class="btn ghost small" onClick=${() => setNewVersion(false)}>Senare</button></span>
+    </div>`}
     <${EnvNotice} config=${env.config} />
     <main class="wrap" key=${JSON.stringify(route)}>${view}</main>`;
 }

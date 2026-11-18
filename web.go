@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,10 +62,36 @@ func serverIndex() ([]byte, error) {
 	return b, nil
 }
 
+// webBuild: kort hash av alla inbäddade webbfiler. Klienten jämför den med /api/config och
+// föreslår omladdning när servern har fått en ny version (en öppen flik kör annars den gamla
+// koden: 2026-11-18 byggdes ett prov med gammal kod efter en deploy).
+var webBuild = func() string {
+	h := sha256.New()
+	h.Write([]byte(version)) // en ny version ger alltid en ny build, även om bara servern ändrats
+	err := fs.WalkDir(webFS, "web", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := webFS.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		h.Write([]byte(p))
+		h.Write(b)
+		return nil
+	})
+	if err != nil {
+		log.Printf("webBuild: %v", err)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}()
+
 // clientConfig är svaret på /api/config (web/adapters/server.js).
 func clientConfig(ai bool) map[string]any {
 	return map[string]any{
-		"env": "server",
+		"env":     "server",
+		"version": version,
+		"build":   webBuild,
 		"features": map[string]any{
 			"ai":             ai,
 			"images":         ai,
